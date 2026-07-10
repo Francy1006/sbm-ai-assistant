@@ -2,13 +2,13 @@ import os
 import cohere
 
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+COHERE_MODEL= os.getenv("COHERE_MODEL")
 
 client = cohere.ClientV2(api_key=COHERE_API_KEY)
 
-
 def generate_answer(question: str, context: str) -> str:
     response = client.chat(
-        model="command-a-03-2025",
+        model=COHERE_MODEL,
         messages=[
             {
                 "role": "system",

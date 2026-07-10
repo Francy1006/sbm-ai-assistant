@@ -6,3 +6,4 @@ fastembed
 cohere
 requests
 beautifulsoup4
+APScheduler

@@ -10,6 +10,8 @@ from app.services.qdrant_service import (
     delete_points_by_page_id,
     deactivate_old_syncs,
     cleanup_inactive_same_version,
+    get_active_page_version,
+    cleanup_old_inactive_versions,
 )
 from app.services.llm_service import generate_answer
 from app.services.confluence.confluence_client import (
@@ -19,9 +21,18 @@ from app.services.confluence.confluence_client import (
 )
 from app.services.confluence.html_parser import clean_html_to_text
 from app.services.chunk_service import split_text_into_chunks
+from app.services.confluence.confluence_sync_service import sync_confluence_pages
+from contextlib import asynccontextmanager
+from app.services.scheduler_service import start_scheduler
 
 
-app = FastAPI(title="SBM AI Assistant")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler(ingest_confluence_page)
+    yield
+
+
+app = FastAPI(title="SBM AI Assistant", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -190,6 +201,7 @@ def ingest_confluence_page(page_id: str):
     deactivate_old_syncs(page_id, sync_run_id)
 
     deleted_old_same_version = cleanup_inactive_same_version(page_id, page_version)
+    deleted_old_versions = cleanup_old_inactive_versions(page_id)
 
     return {
         "status": "indexed",
@@ -200,6 +212,7 @@ def ingest_confluence_page(page_id: str):
         "page_version": page_version,
         "sync_run_id": sync_run_id,
         "deleted_old_same_version": deleted_old_same_version,
+        "deleted_old_versions": deleted_old_versions,
     }
 
 
@@ -232,7 +245,7 @@ def ingest_confluence_space():
                 "page_version": result["page_version"],
                 "chunks_count": result["chunks_count"],
                 "sync_run_id": result["sync_run_id"],
-                "deleted_old_same_version": result["deleted_old_same_version"],
+                "deleted_old_same_version": result["deleted_old_same_version"],   
             }
         )
 
@@ -241,3 +254,8 @@ def ingest_confluence_space():
         "pages_count": len(indexed_pages),
         "pages": indexed_pages,
     }
+
+
+@app.post("/confluence/sync")
+def sync_confluence_space():
+    return sync_confluence_pages(ingest_confluence_page)
