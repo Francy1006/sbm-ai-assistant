@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+qdrant-client
+fastembed
+cohere
+requests
+beautifulsoup4
