@@ -1,1 +1,5 @@
 .env.example
+__pycache__/
+backend/app/services/__pycache__/
+*.py[cod]
+*$py.class
