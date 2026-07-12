@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks, Request, HTTPException
+
 import os
 import uuid
 
@@ -7,10 +8,8 @@ from app.services.qdrant_service import (
     create_collection,
     save_embedding,
     search_similar,
-    delete_points_by_page_id,
     deactivate_old_syncs,
     cleanup_inactive_same_version,
-    get_active_page_version,
     cleanup_old_inactive_versions,
 )
 from app.services.llm_service import generate_answer
@@ -24,6 +23,15 @@ from app.services.chunk_service import split_text_into_chunks
 from app.services.confluence.confluence_sync_service import sync_confluence_pages
 from contextlib import asynccontextmanager
 from app.services.scheduler_service import start_scheduler
+from app.services.slack_service import send_slack_message
+from slack_sdk.signature import SignatureVerifier
+
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
+
+if not SLACK_SIGNING_SECRET:
+    raise ValueError("SLACK_SIGNING_SECRET is not configured")
+
+slack_signature_verifier = SignatureVerifier(signing_secret=SLACK_SIGNING_SECRET)
 
 
 @asynccontextmanager
@@ -245,7 +253,7 @@ def ingest_confluence_space():
                 "page_version": result["page_version"],
                 "chunks_count": result["chunks_count"],
                 "sync_run_id": result["sync_run_id"],
-                "deleted_old_same_version": result["deleted_old_same_version"],   
+                "deleted_old_same_version": result["deleted_old_same_version"],
             }
         )
 
@@ -259,7 +267,6 @@ def ingest_confluence_space():
 @app.post("/confluence/sync")
 def sync_confluence_space():
     return sync_confluence_pages(ingest_confluence_page)
-
 
 
 @app.post("/rag/query")
@@ -289,3 +296,96 @@ def rag_query(data: dict):
             for result in results
         ],
     }
+
+
+@app.post("/slack/test")
+def slack_test(data: dict):
+    return send_slack_message(channel=data["channel"], text=data["text"])
+
+
+@app.post("/slack/rag")
+def slack_rag(data: dict):
+    channel = data["channel"]
+    question = data["question"]
+
+    rag_response = rag_query({"question": question})
+
+    sources_text = "\n".join(
+        [
+            f"- {source['page_title']} v{source['page_version']} | score: {round(source['score'], 4)}"
+            for source in rag_response["sources"]
+        ]
+    )
+
+    message = f"""
+*Pregunta:*
+{question}
+
+*Respuesta:*
+{rag_response["answer"]}
+
+*Fuentes:*
+{sources_text}
+"""
+
+    return send_slack_message(channel=channel, text=message)
+
+
+def process_slack_mention(channel: str, text: str, thread_ts: str):
+    question = text.split(">", 1)[-1].strip()
+
+    try:
+        rag_response = rag_query({"question": question})
+    except Exception:
+        send_slack_message(
+            channel=channel,
+            text="No pude generar la respuesta. Intenta nuevamente.",
+            thread_ts=thread_ts
+        )
+        return
+
+    sources_text = "\n".join(
+        [
+            f"- {source['page_title']} v{source['page_version']} | score: {round(source['score'], 4)}"
+            for source in rag_response["sources"]
+        ]
+    )
+
+    message = f"""
+*Pregunta:*
+{question}
+
+*Respuesta:*
+{rag_response["answer"]}
+
+*Fuentes:*
+{sources_text}
+"""
+
+    send_slack_message(
+        channel=channel,
+        text=message,
+        thread_ts=thread_ts,
+    )
+
+
+@app.post("/slack/events")
+async def slack_events(request: Request, background_tasks: BackgroundTasks):
+    raw_body = await request.body()
+
+    if not slack_signature_verifier.is_valid_request(raw_body, dict(request.headers)):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+    data = await request.json()
+
+    if data.get("type") == "url_verification":
+        return {"challenge": data.get("challenge")}
+
+    event = data.get("event", {})
+
+    if event.get("type") == "app_mention":
+        background_tasks.add_task(
+            process_slack_mention, event["channel"], event["text"], event["ts"]
+        )
+
+    return {"ok": True}
