@@ -8,7 +8,6 @@ from qdrant_client.models import (
     FieldCondition,
     MatchValue,
     FilterSelector,
-    PayloadSelectorExclude,
 )
 
 QDRANT_URL = os.getenv("QDRANT_URL")
@@ -227,3 +226,6 @@ def cleanup_old_inactive_versions(page_id: str, keep_last_versions: int = 1):
         )
 
     return len(point_ids_to_delete) 
+
+
+
