@@ -3026,3 +3026,64 @@ El refactor base ya está cerrado. El siguiente paso es confirmar el contrato re
 2. crear intent routing;
 3. conectar RAG y API bajo el mismo flujo;
 4. validar el flujo transversal desde Slack.
+
+
+---
+
+## 23. Portafolio público planificado
+
+### 23.1 React Public Portal
+
+Estado: ⏳ Planificado.
+
+Objetivo:
+
+- Incorporar una aplicación React al ecosistema SBM para demostrar experiencia práctica en React y consumo de APIs REST sobre un caso de negocio real.
+
+Características:
+
+- No forma parte del ERP interno.
+- Consumirá `dp-api`.
+- Compartirá la misma arquitectura backend del ecosistema SBM.
+- Estará orientada a usuarios externos.
+
+Público objetivo inicial:
+
+- Inversionistas.
+- Interesados en franquicias.
+- Potenciales clientes públicos del ecosistema SBM.
+
+### 23.2 Primera aplicación
+
+Nombre tentativo:
+
+- SBM Franchise ROI Calculator.
+
+Objetivo:
+
+- Permitir a potenciales inversionistas simular la rentabilidad de una franquicia mediante una calculadora interactiva.
+
+Funcionalidades iniciales:
+
+- Inversión inicial.
+- Costos fijos.
+- Ventas proyectadas.
+- Punto de equilibrio.
+- ROI.
+- Payback.
+- Simulación de escenarios.
+
+Evolución posible:
+
+- Recomendaciones asistidas por IA utilizando el mismo ecosistema del AI Assistant.
+
+### 23.3 Objetivo dentro del portafolio
+
+La aplicación existe principalmente para:
+
+- demostrar experiencia práctica con React;
+- demostrar consumo de APIs REST;
+- evidenciar diseño de soluciones completas sobre un caso de negocio real;
+- complementar el ERP interno desarrollado en Vue.js mostrando capacidad para trabajar con múltiples stacks frontend.
+
+No reemplaza el ERP ni forma parte del roadmap funcional del negocio; es una aplicación pública orientada al portafolio profesional.
