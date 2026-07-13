@@ -1,8 +1,6 @@
-import os
 import cohere
 
-COHERE_API_KEY = os.getenv("COHERE_API_KEY")
-COHERE_MODEL= os.getenv("COHERE_MODEL")
+from app.config.settings import COHERE_API_KEY, COHERE_MODEL
 
 client = cohere.ClientV2(api_key=COHERE_API_KEY)
 

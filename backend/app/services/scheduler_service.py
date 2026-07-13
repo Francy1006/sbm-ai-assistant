@@ -1,4 +1,4 @@
-import os
+from app.config.settings import CONFLUENCE_SYNC_INTERVAL_MINUTES
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -18,7 +18,7 @@ def run_confluence_sync(ingest_page_func):
 
 
 def start_scheduler(ingest_page_func):
-    interval_minutes = int(os.getenv("CONFLUENCE_SYNC_INTERVAL_MINUTES", "5"))
+    interval_minutes = int(CONFLUENCE_SYNC_INTERVAL_MINUTES)
 
     logger.warning(
         "[SCHEDULER] Starting scheduler every %s minutes...",

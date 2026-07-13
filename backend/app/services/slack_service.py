@@ -1,7 +1,6 @@
-import os
 from slack_sdk import WebClient
 
-SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
+from app.config.settings import SLACK_BOT_TOKEN
 
 if not SLACK_BOT_TOKEN:
     raise ValueError("SLACK_BOT_TOKEN is not configured")

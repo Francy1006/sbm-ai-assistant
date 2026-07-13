@@ -1,4 +1,4 @@
-import os
+from app.config.settings import CONFLUENCE_EXCLUDED_TITLES
 
 from app.services.confluence.confluence_client import (
     list_pages,
@@ -12,7 +12,7 @@ def sync_confluence_pages(ingest_page_func):
 
     excluded_titles = [
         title.strip()
-        for title in os.getenv("CONFLUENCE_EXCLUDED_TITLES", "").split(",")
+        for title in CONFLUENCE_EXCLUDED_TITLES.split(",")
         if title.strip()
     ]
 
@@ -24,11 +24,13 @@ def sync_confluence_pages(ingest_page_func):
         title = page_item["title"]
 
         if title in excluded_titles:
-            skipped_pages.append({
-                "page_id": page_id,
-                "title": title,
-                "reason": "excluded_title",
-            })
+            skipped_pages.append(
+                {
+                    "page_id": page_id,
+                    "title": title,
+                    "reason": "excluded_title",
+                }
+            )
             continue
 
         page = get_page_content(page_id)
@@ -36,24 +38,28 @@ def sync_confluence_pages(ingest_page_func):
         active_qdrant_version = get_active_page_version(page_id)
 
         if active_qdrant_version == confluence_version:
-            skipped_pages.append({
-                "page_id": page_id,
-                "title": title,
-                "reason": "already_synced",
-                "page_version": confluence_version,
-            })
+            skipped_pages.append(
+                {
+                    "page_id": page_id,
+                    "title": title,
+                    "reason": "already_synced",
+                    "page_version": confluence_version,
+                }
+            )
             continue
 
         result = ingest_page_func(page_id)
 
-        indexed_pages.append({
-            "page_id": page_id,
-            "title": result["title"],
-            "previous_version": active_qdrant_version,
-            "new_version": result["page_version"],
-            "chunks_count": result["chunks_count"],
-            "sync_run_id": result["sync_run_id"],
-        })
+        indexed_pages.append(
+            {
+                "page_id": page_id,
+                "title": result["title"],
+                "previous_version": active_qdrant_version,
+                "new_version": result["page_version"],
+                "chunks_count": result["chunks_count"],
+                "sync_run_id": result["sync_run_id"],
+            }
+        )
 
     return {
         "status": "sync_completed",

@@ -1,4 +1,3 @@
-import os
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -10,8 +9,12 @@ from qdrant_client.models import (
     FilterSelector,
 )
 
-QDRANT_URL = os.getenv("QDRANT_URL")
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
+from app.config.settings import (
+    QDRANT_URL,
+    QDRANT_COLLECTION_NAME,
+)
+
+COLLECTION_NAME = QDRANT_COLLECTION_NAME
 
 client = QdrantClient(url=QDRANT_URL)
 

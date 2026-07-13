@@ -1,11 +1,12 @@
-import os
 import requests
 from requests.auth import HTTPBasicAuth
 
-CONFLUENCE_BASE_URL = os.getenv("CONFLUENCE_BASE_URL")
-CONFLUENCE_EMAIL = os.getenv("CONFLUENCE_EMAIL")
-CONFLUENCE_API_TOKEN = os.getenv("CONFLUENCE_API_TOKEN")
-CONFLUENCE_SPACE_KEY = os.getenv("CONFLUENCE_SPACE_KEY")
+from app.config.settings import (
+    CONFLUENCE_BASE_URL,
+    CONFLUENCE_EMAIL,
+    CONFLUENCE_API_TOKEN,
+    CONFLUENCE_SPACE_KEY,
+)
 
 
 def test_confluence_connection():

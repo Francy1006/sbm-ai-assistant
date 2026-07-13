@@ -1,12 +1,10 @@
-import os
+from app.config.settings import SLACK_SIGNING_SECRET
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from slack_sdk.signature import SignatureVerifier
 
 from app.api.routes.rag import rag_query
 from app.services.slack_service import send_slack_message
-
-SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
 
 if not SLACK_SIGNING_SECRET:
     raise ValueError("SLACK_SIGNING_SECRET is not configured")
