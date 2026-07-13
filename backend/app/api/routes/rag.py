@@ -1,8 +1,12 @@
 from fastapi import APIRouter
 
+from app.schemas.rag import (
+    RagQueryRequest,
+    RagQueryResponse,
+)
 from app.services.embedding_service import create_embedding
-from app.services.qdrant_service import search_similar
 from app.services.llm_service import generate_answer
+from app.services.qdrant_service import search_similar
 
 
 router = APIRouter(
@@ -11,9 +15,12 @@ router = APIRouter(
 )
 
 
-@router.post("/query")
-def rag_query(data: dict):
-    question = data["question"]
+@router.post(
+    "/query",
+    response_model=RagQueryResponse,
+)
+def rag_query(data: RagQueryRequest):
+    question = data.question
 
     vector = create_embedding(question)
     results = search_similar(vector, limit=3)

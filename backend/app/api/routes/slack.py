@@ -1,15 +1,20 @@
-from app.config.settings import SLACK_SIGNING_SECRET
-
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from slack_sdk.signature import SignatureVerifier
 
 from app.api.routes.rag import rag_query
+from app.config.settings import SLACK_SIGNING_SECRET
+from app.schemas.rag import RagQueryRequest
 from app.services.slack_service import send_slack_message
+
 
 if not SLACK_SIGNING_SECRET:
     raise ValueError("SLACK_SIGNING_SECRET is not configured")
 
-slack_signature_verifier = SignatureVerifier(signing_secret=SLACK_SIGNING_SECRET)
+
+slack_signature_verifier = SignatureVerifier(
+    signing_secret=SLACK_SIGNING_SECRET
+)
+
 
 router = APIRouter(
     prefix="/slack",
@@ -29,7 +34,9 @@ def process_slack_mention(channel: str, text: str, thread_ts: str):
     question = text.split(">", 1)[-1].strip()
 
     try:
-        rag_response = rag_query({"question": question})
+        rag_response = rag_query(
+            RagQueryRequest(question=question)
+        )
     except Exception:
         send_slack_message(
             channel=channel,
@@ -40,21 +47,25 @@ def process_slack_mention(channel: str, text: str, thread_ts: str):
 
     sources_text = "\n".join(
         [
-            f"- {source['page_title']} v{source['page_version']} | score: {round(source['score'], 4)}"
+            (
+                f"- {source['page_title']} "
+                f"v{source['page_version']} | "
+                f"score: {round(source['score'], 4)}"
+            )
             for source in rag_response["sources"]
         ]
     )
 
     message = f"""
-        *Pregunta:*
-        {question}
+*Pregunta:*
+{question}
 
-        *Respuesta:*
-        {rag_response["answer"]}
+*Respuesta:*
+{rag_response["answer"]}
 
-        *Fuentes:*
-        {sources_text}
-        """
+*Fuentes:*
+{sources_text}
+"""
 
     send_slack_message(
         channel=channel,
@@ -68,47 +79,71 @@ def slack_rag(data: dict):
     channel = data["channel"]
     question = data["question"]
 
-    rag_response = rag_query({"question": question})
+    rag_response = rag_query(
+        RagQueryRequest(question=question)
+    )
 
     sources_text = "\n".join(
         [
-            f"- {source['page_title']} v{source['page_version']} | score: {round(source['score'], 4)}"
+            (
+                f"- {source['page_title']} "
+                f"v{source['page_version']} | "
+                f"score: {round(source['score'], 4)}"
+            )
             for source in rag_response["sources"]
         ]
     )
 
     message = f"""
-        *Pregunta:*
-        {question}
+*Pregunta:*
+{question}
 
-        *Respuesta:*
-        {rag_response["answer"]}
+*Respuesta:*
+{rag_response["answer"]}
 
-        *Fuentes:*
-        {sources_text}
-        """
+*Fuentes:*
+{sources_text}
+"""
 
-    return send_slack_message(channel=channel, text=message)
-
+    return send_slack_message(
+        channel=channel,
+        text=message,
+    )
 
 
 @router.post("/events")
-async def slack_events(request: Request, background_tasks: BackgroundTasks):
+async def slack_events(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     raw_body = await request.body()
 
-    if not slack_signature_verifier.is_valid_request(raw_body, dict(request.headers)):
-        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    if not slack_signature_verifier.is_valid_request(
+        raw_body,
+        dict(request.headers),
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Slack signature",
+        )
 
     data = await request.json()
 
     if data.get("type") == "url_verification":
-        return {"challenge": data.get("challenge")}
+        return {
+            "challenge": data.get("challenge"),
+        }
 
     event = data.get("event", {})
 
     if event.get("type") == "app_mention":
         background_tasks.add_task(
-            process_slack_mention, event["channel"], event["text"], event["ts"]
+            process_slack_mention,
+            event["channel"],
+            event["text"],
+            event["ts"],
         )
 
-    return {"ok": True}
+    return {
+        "ok": True,
+    }

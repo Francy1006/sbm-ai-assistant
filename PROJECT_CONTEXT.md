@@ -1,5 +1,7 @@
 # PROJECT_CONTEXT.md
 
+> **Last updated:** 2026-07-13
+>
 > **Purpose of this file**
 >
 > This document is persistent project memory for an LLM. It is **not** a README, onboarding guide, product brochure, or installation tutorial. It preserves the technical, architectural, product, and historical context required to continue the project in a new conversation without access to the original chat.
@@ -157,7 +159,7 @@ Confluence
 → Slack thread
 ```
 
-Posteriormente comenzó un refactor de estructura para preparar el repositorio como orquestador de agentes y Tools.
+Posteriormente se completó el refactor arquitectónico base planificado para el MVP: rutas separadas, `main.py` reducido a bootstrap, configuración centralizada en `settings.py`, prompt RAG extraído a `app/prompts` y primer contrato Pydantic aplicado al endpoint RAG. La siguiente fase es iniciar la capa `tools` y la integración de lectura con `dp-api`.
 
 ### 2.2 Qué ya funciona
 
@@ -247,42 +249,142 @@ Las rutas fueron extraídas de `main.py` y separadas en:
 #### Configuración
 
 - Se creó `backend/app/config/settings.py`.
-- `llm_service.py` ya consume `COHERE_API_KEY` y `COHERE_MODEL` desde `settings.py`.
+- La migración de configuración del alcance actual quedó completada.
+- `llm_service.py` consume `COHERE_API_KEY` y `COHERE_MODEL` desde `settings.py`.
+- `qdrant_service.py` consume `QDRANT_URL` y `QDRANT_COLLECTION_NAME` desde `settings.py`.
+- `confluence_client.py` consume `CONFLUENCE_BASE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` y `CONFLUENCE_SPACE_KEY` desde `settings.py`.
+- `confluence_sync_service.py` consume `CONFLUENCE_EXCLUDED_TITLES` desde `settings.py`.
+- `scheduler_service.py` consume `CONFLUENCE_SYNC_INTERVAL_MINUTES` desde `settings.py`.
+- `slack_service.py` consume `SLACK_BOT_TOKEN` desde `settings.py`.
+- `api/routes/slack.py` consume `SLACK_SIGNING_SECRET` desde `settings.py`.
+- Se eliminaron los `os.getenv` locales de esos archivos.
 - `.env.example` fue reemplazado por `.env.dev`.
 - `docker-compose.yml` fue actualizado para usar `.env.dev`.
 - `.env.prod` fue planificado como archivo vacío hasta el primer deploy; su existencia final no fue confirmada explícitamente.
-- La migración completa de todos los servicios hacia `settings.py` aún no está terminada.
-
-### 2.3 Qué está parcialmente implementado
-
-#### Refactor de configuración
-
-Estado:
-
-```text
-llm_service.py → settings.py ✅
-qdrant_service.py → settings.py 🚧 siguiente paso
-confluence_client.py → settings.py ⏳
-scheduler_service.py → settings.py ⏳
-slack_service.py → settings.py ⏳
-api/routes/slack.py signing secret → settings.py ⏳
-```
+- La política Git de `.env.dev` y `.env.prod` aún debe verificarse antes de publicar o desplegar.
 
 #### Prompts
 
-La carpeta `app/prompts` existe o fue creada como parte de la estructura objetivo, pero el system prompt todavía reside en `llm_service.py`.
+- Se creó `backend/app/prompts/rag_system_prompt.py`.
+- El prompt de sistema RAG vive en la constante `RAG_SYSTEM_PROMPT`.
+- `llm_service.py` importa `RAG_SYSTEM_PROMPT`.
+- El prompt de usuario con `Contexto` y `Pregunta` sigue construyéndose dentro de `generate_answer`.
+- Todavía no existe un Prompt Builder formal; no es necesario hasta que existan múltiples Tools o agentes.
 
-Archivo planificado:
+Contenido confirmado:
 
-```text
-backend/app/prompts/rag_system_prompt.py
+```python
+RAG_SYSTEM_PROMPT = """
+Eres un asistente RAG estricto.
+
+Reglas:
+1. Responde únicamente con información presente explícitamente en el contexto.
+2. No agregues ejemplos, supuestos, inferencias ni conocimiento externo.
+3. Si el contexto no contiene suficiente información, responde: "No está especificado en la documentación disponible."
+4. No inventes estados, funcionalidades, nombres de módulos ni detalles operativos.
+5. Responde de forma breve y directa.
+"""
 ```
+
+#### Schemas Pydantic
+
+- Se creó `backend/app/schemas/rag.py`.
+- Modelos actuales:
+  - `RagQueryRequest`
+  - `RagSource`
+  - `RagQueryResponse`
+- `RagQueryRequest.question` exige una cadena con longitud mínima de 1.
+- `RagSource` conserva toda la metadata devuelta actualmente:
+  - `source`
+  - `page_id`
+  - `page_title`
+  - `page_version`
+  - `chunk_index`
+  - `score`
+- `RagQueryResponse` expone:
+  - `question`
+  - `answer`
+  - `sources`
+- `POST /rag/query` recibe `RagQueryRequest` y declara `response_model=RagQueryResponse`.
+- FastAPI documenta y valida ese contrato en OpenAPI/Swagger.
+- `api/routes/slack.py` construye `RagQueryRequest(question=question)` antes de reutilizar `rag_query`.
+- Una mención real en Slack fue validada correctamente después del cambio a Pydantic.
+- Los demás endpoints todavía pueden usar `dict`; se crearán schemas adicionales cuando aparezca una necesidad real.
+
+Contenido confirmado:
+
+```python
+from pydantic import BaseModel, Field
+
+
+class RagQueryRequest(BaseModel):
+    question: str = Field(min_length=1)
+
+
+class RagSource(BaseModel):
+    source: str | None = None
+    page_id: str | None = None
+    page_title: str | None = None
+    page_version: int | None = None
+    chunk_index: int | None = None
+    score: float
+
+
+class RagQueryResponse(BaseModel):
+    question: str
+    answer: str
+    sources: list[RagSource]
+```
+
+Firma actual del endpoint:
+
+```python
+@router.post(
+    "/query",
+    response_model=RagQueryResponse,
+)
+def rag_query(data: RagQueryRequest):
+    question = data.question
+```
+
+Adaptación confirmada en Slack:
+
+```python
+rag_response = rag_query(
+    RagQueryRequest(question=question)
+)
+```
+
+### 2.3 Qué está parcialmente implementado
 
 #### Schemas
 
-La carpeta `app/schemas` existe pero está vacía.
+La primera migración Pydantic está completada para RAG:
 
-Actualmente los endpoints reciben `data: dict`. Todavía no existen modelos Pydantic para requests y responses.
+```text
+POST /rag/query
+→ RagQueryRequest
+→ RagQueryResponse
+→ RagSource
+```
+
+Estado restante:
+
+- `/slack/test` continúa recibiendo `data: dict`.
+- `/slack/rag` continúa recibiendo `data: dict`.
+- Las rutas de Confluence y los endpoints técnicos de `ai.py` no fueron migrados en esta fase.
+- La decisión es crear DTOs adicionales de forma incremental, cuando un endpoint se modifique o una Tool necesite contrato propio, evitando diseñar schemas sin uso real.
+
+#### Separación del pipeline RAG
+
+El endpoint y Slack siguen reutilizando la función `rag_query` definida en la capa HTTP:
+
+```text
+api/routes/slack.py
+→ importa rag_query desde api/routes/rag.py
+```
+
+Esto funciona y fue validado, pero sigue siendo deuda arquitectónica. En el futuro el pipeline deberá moverse a un `rag_service.py`, para que tanto la ruta RAG como Slack dependan de un servicio y no de otra route.
 
 #### Orquestador
 
@@ -345,6 +447,14 @@ La siguiente gran integración será una Tool para consumir `dp-api`, pero aún 
 8. Se decidió separar el system prompt en un archivo propio.
 9. Se mantendrá Slack como canal real de negocio.
 10. Postman queda como herramienta técnica de validación, no como interfaz de usuario.
+11. Se completó la centralización de configuración del alcance actual en `settings.py`.
+12. Se movió el prompt de sistema RAG a `backend/app/prompts/rag_system_prompt.py`.
+13. Se creó el primer contrato Pydantic en `backend/app/schemas/rag.py`.
+14. Se tipó `POST /rag/query` con `RagQueryRequest` y `RagQueryResponse`.
+15. Slack fue adaptado para construir `RagQueryRequest` antes de reutilizar el RAG.
+16. Se validó una mención real en Slack después de los cambios.
+17. Se decidió no crear más schemas por adelantado; se añadirán según necesidad.
+18. Se cerró el refactor base del MVP y la siguiente fase pasa a `tools/` y `dp-api`.
 
 ---
 
@@ -651,17 +761,29 @@ La siguiente gran integración será una Tool para consumir `dp-api`, pero aún 
 
 #### 5.4 Centralizar configuración
 
-- Estado: 🚧
+- Estado: ✅
 - Archivo:
   - `backend/app/config/settings.py`
-- Completado:
-  - LLM.
-- Siguiente:
-  - Qdrant.
-- Posterior:
-  - Confluence;
-  - Slack;
-  - scheduler.
+- Migraciones completadas:
+  - LLM;
+  - Qdrant;
+  - cliente Confluence;
+  - exclusiones de sync Confluence;
+  - scheduler;
+  - Slack Web API;
+  - Slack signing secret.
+- Archivos confirmados usando settings:
+  - `llm_service.py`
+  - `qdrant_service.py`
+  - `confluence_client.py`
+  - `confluence_sync_service.py`
+  - `scheduler_service.py`
+  - `slack_service.py`
+  - `api/routes/slack.py`
+- Validación:
+  - backend reiniciado;
+  - sincronización Confluence funcional;
+  - Slack funcional.
 
 #### 5.5 Entornos
 
@@ -676,19 +798,40 @@ La siguiente gran integración será una Tool para consumir `dp-api`, pero aún 
 
 #### 5.6 Prompt separado
 
-- Estado: ⏳
-- Archivo planificado:
+- Estado: ✅
+- Archivo:
   - `backend/app/prompts/rag_system_prompt.py`
+- Constante:
+  - `RAG_SYSTEM_PROMPT`
+- Integración:
+  - `llm_service.py` importa la constante.
+- Alcance:
+  - solo el system prompt fue externalizado;
+  - el mensaje de usuario se construye todavía dentro de `generate_answer`;
+  - un Prompt Builder formal sigue pendiente hasta que existan múltiples Tools o agentes.
 
 #### 5.7 Schemas Pydantic
 
-- Estado: ⏳
-- Objetivo:
-  - reemplazar `data: dict`.
-- Riesgo actual:
-  - validación débil;
-  - posibles KeyError;
-  - OpenAPI menos claro.
+- Estado: ✅ para el flujo RAG actual; incremental para futuros endpoints.
+- Archivo:
+  - `backend/app/schemas/rag.py`
+- Modelos:
+  - `RagQueryRequest`
+  - `RagSource`
+  - `RagQueryResponse`
+- Aplicación:
+  - `POST /rag/query` recibe `RagQueryRequest`;
+  - declara `response_model=RagQueryResponse`;
+  - usa `data.question` en lugar de `data["question"]`;
+  - Swagger/OpenAPI muestra el contrato tipado.
+- Slack:
+  - `process_slack_mention` crea `RagQueryRequest(question=question)`;
+  - `POST /slack/rag` crea `RagQueryRequest(question=question)`.
+- Validación:
+  - mención real en Slack funcionando después de la migración.
+- Decisión:
+  - no migrar todos los endpoints por anticipado;
+  - crear nuevos schemas cuando se modifiquen endpoints o se implementen Tools.
 
 ### Fase 6 — Evolución a orquestador
 
@@ -765,6 +908,8 @@ La siguiente gran integración será una Tool para consumir `dp-api`, pero aún 
 Slack
   ↓
 FastAPI routes
+  ↓
+RagQueryRequest / RagQueryResponse
   ↓
 RAG pipeline
   ├── Embedding service
@@ -982,14 +1127,11 @@ No existe como servicio independiente.
 
 Estado actual:
 
-- prompt system hardcodeado en `llm_service.py`;
-- prompt user construido dentro de `generate_answer`.
+- el system prompt RAG fue externalizado a `app/prompts/rag_system_prompt.py`;
+- `llm_service.py` importa `RAG_SYSTEM_PROMPT`;
+- el prompt user continúa construyéndose dentro de `generate_answer`.
 
-Próximo refactor:
-
-- mover system prompt a `app/prompts/rag_system_prompt.py`.
-
-Un Prompt Builder formal se evaluará cuando existan múltiples Tools/agentes.
+Un Prompt Builder formal se evaluará cuando existan múltiples Tools/agentes. No debe crearse antes de que haya variaciones reales de prompts o composición de contexto.
 
 ### 4.13 Context Builder
 
@@ -1073,7 +1215,7 @@ Pendiente:
 
 ### 4.18 Configuración
 
-Centralización en progreso en:
+Centralización completada para el alcance actual en:
 
 ```text
 backend/app/config/settings.py
@@ -1114,7 +1256,7 @@ Pendiente:
 - rotación de secretos;
 - secret manager;
 - rate limiting;
-- validación estricta de DTOs;
+- ampliar validación estricta de DTOs más allá del flujo RAG;
 - auditoría de acciones;
 - políticas para Tools con escritura.
 
@@ -1135,6 +1277,7 @@ No existe autenticación general para `/rag/query`, `/confluence/*` o `/ai/*`.
 Actual:
 
 - error de firma Slack → HTTP 401;
+- input vacío o inválido en `POST /rag/query` → HTTP 422 de FastAPI/Pydantic;
 - error durante RAG en mención Slack → mensaje controlado;
 - falta de conocimiento → fallback documental.
 
@@ -1178,7 +1321,9 @@ flowchart LR
             SlackEvents["Slack Events Handler<br/>signature verification"]
             SlackBackground["BackgroundTasks<br/>evita retries duplicados"]
             RAGRoute["RAG Route"]
+            RAGSchemas["Pydantic RAG Schemas<br/>request · source · response"]
             RAGPipeline["RAG Pipeline"]
+            RAGPrompt["RAG System Prompt<br/>rag_system_prompt.py"]
             Embeddings["Embedding Service<br/>multilingual-e5-large · 1024"]
             VectorSearch["Qdrant Service<br/>is_active=true"]
             LLM["Cohere LLM Service"]
@@ -1239,14 +1384,17 @@ flowchart LR
 
     Slack -->|app_mention| SlackEvents
     SlackEvents --> SlackBackground
-    SlackBackground --> RAGRoute
+    SlackBackground -->|RagQueryRequest| RAGRoute
+    RAGRoute --> RAGSchemas
     RAGRoute --> RAGPipeline
     RAGPipeline --> Embeddings
     Embeddings --> VectorSearch
     VectorSearch --> Qdrant
-    RAGPipeline --> LLM
+    RAGPipeline --> RAGPrompt
+    RAGPrompt --> LLM
     LLM --> Cohere
     LLM --> Formatter
+    Formatter --> RAGSchemas
     Formatter -->|thread response| Slack
 
     Scheduler --> SyncService
@@ -1383,20 +1531,23 @@ Orquestador
 6. Backend responde rápido `{"ok": true}`.
 7. El procesamiento real se agrega a `BackgroundTasks`.
 8. Se extrae la pregunta removiendo la mención.
-9. Se crea embedding.
-10. Qdrant recupera top 3 puntos activos.
-11. Se concatena el contexto.
-12. Cohere recibe:
-    - system prompt estricto;
+9. Slack construye `RagQueryRequest(question=question)`.
+10. `rag_query` recibe el DTO y lee `data.question`.
+11. Se crea embedding.
+12. Qdrant recupera top 3 puntos activos.
+13. Se concatena el contexto.
+14. Cohere recibe:
+    - `RAG_SYSTEM_PROMPT`;
     - contexto;
     - pregunta.
-13. Se construye respuesta.
-14. Se agregan fuentes:
+15. Se construye respuesta.
+16. Se agregan fuentes:
     - página;
     - versión;
     - score.
-15. `slack_service` publica en thread.
-16. Si ocurre error técnico:
+17. La respuesta respeta `RagQueryResponse`.
+18. `slack_service` publica en thread.
+19. Si ocurre error técnico:
     - se responde `No pude generar la respuesta. Intenta nuevamente.`
 
 ```mermaid
@@ -1419,7 +1570,7 @@ sequenceDiagram
     else Firma válida
         E->>B: enqueue process_slack_mention
         E-->>S: 200 OK inmediato
-        B->>R: rag_query(question)
+        B->>R: rag_query(RagQueryRequest)
         R->>EM: create_embedding
         EM-->>R: vector 1024
         R->>Q: query active chunks
@@ -1546,11 +1697,11 @@ No debe contener:
 
 ### 8.6 `backend/app/prompts`
 
-Responsabilidad futura:
+Responsabilidad actual y futura:
 
 - prompts versionables;
-- prompt RAG;
-- prompts de agentes.
+- prompt RAG actual en `rag_system_prompt.py`;
+- prompts de agentes cuando existan.
 
 No debe contener:
 
@@ -1560,12 +1711,16 @@ No debe contener:
 
 ### 8.7 `backend/app/schemas`
 
-Responsabilidad futura:
+Responsabilidad actual y futura:
 
 - modelos Pydantic;
 - requests;
 - responses;
 - inputs/outputs de Tools.
+- Estado actual:
+  - `rag.py` contiene `RagQueryRequest`, `RagSource` y `RagQueryResponse`.
+- Estrategia:
+  - agregar schemas de forma incremental según uso real.
 
 No debe contener:
 
@@ -1650,7 +1805,9 @@ sbm-ai-assistant/
 │       ├── config/
 │       │   └── settings.py
 │       ├── prompts/
+│       │   └── rag_system_prompt.py
 │       ├── schemas/
+│       │   └── rag.py
 │       └── services/
 │           ├── chunk_service.py
 │           ├── embedding_service.py
@@ -1690,17 +1847,17 @@ backend/app/schemas/__init__.py
 | `api/routes/slack.py` | Endpoints y eventos Slack | ✅ | RAG, Slack SDK | Firma, background, threads |
 | `api/routes/confluence.py` | HTTP Confluence | ✅ | Confluence services | Lectura, ingest, sync |
 | `api/routes/ai.py` | Endpoints técnicos de prueba | ✅ | embeddings, Qdrant, LLM | No son endpoints de negocio |
-| `config/settings.py` | Config central | 🚧 | `os.getenv` | Migración parcial |
-| `prompts/` | Prompts | ⏳ | — | System prompt aún no movido |
-| `schemas/` | DTOs Pydantic | ⏳ | Pydantic/FastAPI | Vacío |
+| `config/settings.py` | Config central | ✅ | `os.getenv` centralizado | Migración del alcance actual completa |
+| `prompts/rag_system_prompt.py` | System prompt RAG | ✅ | importado por `llm_service.py` | Contiene `RAG_SYSTEM_PROMPT` |
+| `schemas/rag.py` | DTOs Pydantic RAG | ✅ | Pydantic/FastAPI | Request, sources y response |
 | `services/embedding_service.py` | Embeddings | ✅ | FastEmbed | 1024 dims |
-| `services/qdrant_service.py` | Vector DB | ✅ | qdrant-client | Config migration pending |
-| `services/llm_service.py` | Cohere y prompt | ✅/🚧 | Cohere, settings | Prompt separation pending |
+| `services/qdrant_service.py` | Vector DB | ✅ | qdrant-client, settings | Config migrada |
+| `services/llm_service.py` | Cohere y generación | ✅ | Cohere, settings, prompt externo | Importa `RAG_SYSTEM_PROMPT` |
 | `services/chunk_service.py` | Chunking | ✅ | — | Char-based |
-| `services/scheduler_service.py` | Polling automático | ✅/🚧 | APScheduler, settings pending | 5 min |
-| `services/slack_service.py` | Envío Slack | ✅/🚧 | slack_sdk, settings pending | thread_ts opcional |
-| `services/confluence/confluence_client.py` | REST Confluence | ✅/🚧 | requests, settings pending | auth email/token |
-| `services/confluence/confluence_sync_service.py` | Detectar cambios | ✅ | client, Qdrant | compara versiones |
+| `services/scheduler_service.py` | Polling automático | ✅ | APScheduler, settings | 5 min |
+| `services/slack_service.py` | Envío Slack | ✅ | slack_sdk, settings | thread_ts opcional |
+| `services/confluence/confluence_client.py` | REST Confluence | ✅ | requests, settings | auth email/token |
+| `services/confluence/confluence_sync_service.py` | Detectar cambios | ✅ | client, Qdrant, settings | compara versiones y exclusiones |
 | `services/confluence/confluence_ingest_service.py` | Ingesta | ✅ | parser, chunk, embeddings, Qdrant | reutilizable |
 | `services/confluence/html_parser.py` | HTML → texto | ✅ | BeautifulSoup | — |
 | `.env.dev` | Config dev | ✅ | Compose | verificar Git/secrets |
@@ -1715,9 +1872,9 @@ flowchart TD
     Main["main.py"] --> Routes["api/routes"]
     Main --> Scheduler["scheduler_service"]
     Routes --> Services["services"]
-    Routes --> Schemas["schemas<br/>pendiente"]
-    Services --> Settings["config/settings"]
-    Services --> Prompts["prompts<br/>pendiente"]
+    Routes --> Schemas["schemas<br/>RAG actual + futuros DTOs"]
+    Services --> Settings["config/settings<br/>centralizado"]
+    Services --> Prompts["prompts<br/>RAG system prompt"]
     Services --> Confluence["Confluence API"]
     Services --> Qdrant["Qdrant"]
     Services --> Cohere["Cohere"]
@@ -1802,20 +1959,27 @@ orchestrator → DB del ERP
 
 Actual:
 
-- `dict`.
+- RAG usa Pydantic:
+  - `RagQueryRequest`
+  - `RagSource`
+  - `RagQueryResponse`
+- Slack adapta sus llamadas internas a RAG mediante `RagQueryRequest`.
+- Otros endpoints todavía usan `dict`.
 
-Objetivo:
+Estrategia:
 
-- Pydantic.
+- Pydantic incremental según necesidad real.
+- No crear contratos sin un endpoint o Tool que los consuma.
 
-Ejemplos futuros:
+Ejemplos actuales y futuros:
 
 ```text
-RagQueryRequest
-RagQueryResponse
-SlackTestRequest
-ToolInvocation
-ToolResult
+RagQueryRequest      ✅
+RagSource            ✅
+RagQueryResponse     ✅
+SlackTestRequest     ⏳
+ToolInvocation       ⏳
+ToolResult           ⏳
 ```
 
 ### 10.6 Errores
@@ -1829,7 +1993,8 @@ Diferenciar:
 3. Request no autenticada:
    - HTTP 401.
 4. Input inválido:
-   - futuro HTTP 422 mediante Pydantic.
+   - HTTP 422 mediante Pydantic en `POST /rag/query`;
+   - pendiente extender DTOs a otros endpoints cuando corresponda.
 5. API de negocio rechaza operación:
    - devolver error de dominio sin reinterpretarlo.
 
@@ -2084,7 +2249,8 @@ Regla acordada para desarrollo asistido:
 
 **Estado:**
 
-- pendiente.
+- completado para el prompt de sistema RAG;
+- un Prompt Builder formal sigue pendiente.
 
 ---
 
@@ -2117,14 +2283,26 @@ Regla acordada para desarrollo asistido:
 
 ### Alta prioridad
 
-- Completar migración hacia `settings.py`.
-- Mover prompt RAG a `app/prompts`.
-- Crear schemas Pydantic.
-- Registrar excepciones capturadas.
-- Añadir retry de Cohere.
+- Registrar excepciones capturadas, especialmente el `except Exception` de Slack.
+- Añadir retry controlado de Cohere.
 - Confirmar política Git de `.env.dev`.
 - Confirmar existencia y manejo de `.env.prod`.
 - Crear URL pública estable para Slack en un deploy real.
+- Definir contrato real de `dp-api` antes de implementar la primera Tool:
+  - base URL;
+  - autenticación;
+  - primer endpoint de solo lectura;
+  - estructura de respuesta;
+  - errores de dominio.
+
+### Deuda resuelta en el último refactor
+
+- ✅ Configuración centralizada en `settings.py` para el alcance actual.
+- ✅ System prompt RAG movido a `app/prompts`.
+- ✅ Primer schema Pydantic creado para RAG.
+- ✅ `POST /rag/query` tipado y documentado.
+- ✅ Slack adaptado al contrato `RagQueryRequest`.
+- ✅ Flujo Slack validado después de la migración.
 
 ### Media prioridad
 
@@ -2544,9 +2722,11 @@ Regla:
 - ✅ Routes separadas.
 - ✅ Ingest service separado.
 - ✅ `main.py` limpio.
-- 🚧 Config centralizada.
-- ⏳ Prompt separado.
-- ⏳ Schemas.
+- ✅ Config centralizada para el alcance actual.
+- ✅ Prompt RAG separado.
+- ✅ Schemas Pydantic del flujo RAG.
+- ✅ OpenAPI tipado para `POST /rag/query`.
+- ✅ Slack adaptado a `RagQueryRequest`.
 - ⏳ Tests.
 - ⏳ Observabilidad.
 - ⏳ Tool Router.
@@ -2605,7 +2785,27 @@ Regla:
 42. Se creó `settings.py`.
 43. Se cambió a `.env.dev`.
 44. Se vinculó `llm_service.py` a settings.
-45. Estado actual: migrar Qdrant a settings.
+45. Se migró `qdrant_service.py` a `settings.py`.
+46. Se migró `slack_service.py` a `settings.py`.
+47. Se migró `confluence_client.py` a `settings.py`.
+48. Se migró `confluence_sync_service.py` a `settings.py`.
+49. Se migró `scheduler_service.py` a `settings.py`.
+50. Se migró `SLACK_SIGNING_SECRET` en `api/routes/slack.py` a `settings.py`.
+51. Se reinició el backend y se validaron los flujos después de la migración.
+52. Se cerró la centralización de configuración del alcance actual.
+53. Se creó `backend/app/prompts/rag_system_prompt.py`.
+54. Se movió el system prompt a `RAG_SYSTEM_PROMPT`.
+55. `llm_service.py` fue actualizado para importar el prompt externo.
+56. Se creó `backend/app/schemas/rag.py`.
+57. Se definieron `RagQueryRequest`, `RagSource` y `RagQueryResponse`.
+58. `RagQueryRequest.question` fue configurado con `Field(min_length=1)`.
+59. `api/routes/rag.py` fue tipado con `RagQueryRequest` y `response_model=RagQueryResponse`.
+60. El acceso a la pregunta cambió de `data["question"]` a `data.question`.
+61. `api/routes/slack.py` fue adaptado para crear `RagQueryRequest(question=question)`.
+62. Se validó una mención real en Slack después del cambio a Pydantic.
+63. Se decidió no crear más schemas por anticipado.
+64. Se dio por cerrado el refactor arquitectónico base del MVP.
+65. Estado actual: comenzar la fase `tools/`, iniciando con el contrato real de `dp-api`.
 
 ---
 
@@ -2613,49 +2813,69 @@ Regla:
 
 ### Siguiente paso exacto
 
-Migrar `qdrant_service.py` para usar:
+Antes de escribir la primera Tool, documentar el contrato real de `dp-api`.
 
-```python
-from app.config.settings import (
-    QDRANT_URL,
-    QDRANT_COLLECTION_NAME,
-)
+Información mínima necesaria:
+
+```text
+DP_API_BASE_URL
+método de autenticación
+primer endpoint de solo lectura
+parámetros requeridos
+estructura JSON de respuesta
+errores esperados
 ```
 
-y dejar:
+El primer caso debe ser pequeño, demostrable y sin escritura. Candidatos:
 
-```python
-COLLECTION_NAME = QDRANT_COLLECTION_NAME
-```
+- buscar un producto;
+- consultar un precio vigente;
+- listar un catálogo acotado.
 
-eliminando el `os.getenv` local.
+No implementar una Tool genérica ni un `BaseTool` complejo antes de conocer ese contrato.
 
-### Validación inmediata
+### Implementación posterior inmediata
 
-1. `docker compose restart backend`
-2. Probar:
-   - `GET /health`
-   - `POST /rag/query`
-3. Confirmar que Qdrant sigue respondiendo.
+Una vez confirmado el primer endpoint:
+
+1. Crear la carpeta:
+   - `backend/app/tools/`
+2. Crear:
+   - `backend/app/tools/__init__.py`
+   - `backend/app/tools/dp_api_tool.py`
+3. Añadir a `settings.py` únicamente las variables realmente necesarias para `dp-api`.
+4. Crear schemas de input/output de la Tool solo cuando el contrato esté definido.
+5. Implementar timeout y preservación de errores de la API.
+6. Validar la Tool de forma aislada.
+7. No integrar aún Slack ni LLM hasta que la Tool devuelva datos estructurados correctamente.
 
 ### Después, en orden
 
-1. Migrar `confluence_client.py` a settings.
-2. Migrar `scheduler_service.py` a settings.
-3. Migrar `slack_service.py` y `api/routes/slack.py` a settings.
-4. Validar todos los flujos.
-5. Crear prompt:
-   - `backend/app/prompts/rag_system_prompt.py`
-6. Importarlo desde `llm_service.py`.
-7. Crear schemas Pydantic.
-8. Confirmar `.env.prod`.
-9. Revisar `.gitignore`.
-10. Commit de refactor.
-11. Comenzar Tool `dp-api`.
-12. Luego crear intent router/orquestador.
+1. Extraer el pipeline RAG desde `api/routes/rag.py` hacia un servicio reutilizable cuando el orquestador necesite invocarlo como capacidad.
+2. Crear un intent router mínimo que distinga:
+   - documentación;
+   - datos ERP.
+3. Conectar el router con:
+   - RAG;
+   - `dp-api` Tool.
+4. Integrar el flujo en Slack.
+5. Registrar Tool calls y errores básicos.
+6. Evaluar agentes especializados solo después de validar el flujo transversal.
 
-No agregar multiagente ni frontend antes de `dp-api` Tool e intent routing.
+### Validaciones pendientes del refactor ya terminado
 
+- Confirmar `.env.prod`.
+- Revisar `.gitignore`.
+- Confirmar que `.env.dev` no se publique.
+- Confirmar el commit final del refactor; no se registró hash en la conversación.
+- Mantener los schemas adicionales como trabajo incremental.
+
+No agregar multiagente, frontend, MCP ni integraciones secundarias antes de:
+
+1. integrar una Tool real de `dp-api`;
+2. crear intent routing;
+3. validar RAG y API desde el mismo canal;
+4. demostrar trazabilidad básica de la decisión.
 ---
 
 ## 21. Glosario
@@ -2790,16 +3010,19 @@ La estructura fue refactorizada:
 - `main.py` solo inicializa;
 - `api/routes` contiene HTTP;
 - `services` contiene capacidades;
-- `config/settings.py` centraliza env;
-- `prompts` y `schemas` están preparados pero pendientes.
+- `config/settings.py` centraliza la configuración del alcance actual;
+- `prompts/rag_system_prompt.py` contiene `RAG_SYSTEM_PROMPT`;
+- `schemas/rag.py` define `RagQueryRequest`, `RagSource` y `RagQueryResponse`;
+- `POST /rag/query` está tipado con Pydantic y documentado en OpenAPI;
+- Slack construye `RagQueryRequest` antes de reutilizar el flujo RAG.
 
-La migración a settings está en progreso. `llm_service.py` ya usa settings. El siguiente paso exacto es migrar `qdrant_service.py`.
+La migración a settings quedó completada para LLM, Qdrant, Confluence, scheduler y Slack. El prompt RAG fue separado y el primer contrato Pydantic fue validado con una mención real en Slack.
 
 La visión futura es mantener este mismo repositorio como **AI Agent Orchestrator**. No se crearán agentes por marca. El orquestador decidirá entre RAG y Tools. La primera Tool será para `dp-api`, que expone productos, materiales, servicios, catálogos, precios y clientes. Las reglas de negocio permanecerán en APIs Django; el orquestador solo coordinará, consultará, construirá contexto y responderá.
 
-No se debe introducir multiagente, frontend, MCP ni features adicionales antes de:
+El refactor base ya está cerrado. El siguiente paso es confirmar el contrato real de `dp-api` e implementar una primera Tool de solo lectura. No se debe introducir multiagente, frontend, MCP ni features adicionales antes de:
 
-1. terminar el refactor;
-2. integrar `dp-api`;
-3. crear intent routing;
-4. validar el flujo transversal.
+1. integrar una Tool real de `dp-api`;
+2. crear intent routing;
+3. conectar RAG y API bajo el mismo flujo;
+4. validar el flujo transversal desde Slack.
