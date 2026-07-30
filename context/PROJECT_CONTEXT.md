@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md
 
-> **Last updated:** 2026-07-13
+> **Last updated:** 2026-07-29
 >
 > **Purpose of this file**
 >
@@ -8,9 +8,130 @@
 >
 > **Accuracy note**
 >
-> The state described here is based on the development conversation and the code snippets explicitly shared by the user. The repository itself was not uploaded or independently inspected. Paths, files, functions, endpoints, and behaviors marked as implemented were explicitly created, shown, or validated during the conversation. Where repository state was discussed but not independently confirmed, this document says so.
+> The state described here was updated after direct inspection of the complete `SBM-SUITE/sbm-ai-assistant` repository supplied on 2026-07-29. The repository includes FastAPI routes, services, schemas, Docker configuration, Qdrant integration, Confluence synchronization, Cohere integration, Slack events, scheduler configuration, README, Git metadata, and local environment files. Secret values are intentionally excluded. Planned context-deployment functionality is explicitly marked as not yet implemented.
 
 ---
+
+## 0. Ubicación y estado verificado
+
+Ruta dentro de la suite:
+
+```text
+SBM-SUITE/
+├── context/
+├── DP-API/
+└── sbm-ai-assistant/
+    ├── context/
+    │   └── PROJECT_CONTEXT.md
+    ├── backend/
+    ├── docker-compose.yml
+    └── README.md
+```
+
+Runtime actual:
+
+```text
+FastAPI backend → puerto 8000
+Qdrant         → puerto 6333
+Docker Compose → runtime oficial
+```
+
+Estado verificado del código:
+
+- `backend/app/main.py` registra routers de Health, RAG, Slack, Confluence y AI.
+- El scheduler de Confluence se inicia mediante `lifespan`.
+- La configuración está centralizada parcialmente en `backend/app/config/settings.py`.
+- El endpoint RAG estable es `POST /rag/query` con contratos Pydantic.
+- Existen endpoints técnicos bajo `/ai/*`.
+- Slack recibe `app_mention`, valida firma y responde en thread.
+- Qdrant usa actualmente la colección documental configurada por `QDRANT_COLLECTION_NAME`.
+- No existe todavía el endpoint `/contexts/export`.
+- No existe todavía la colección `sbm_contexts` implementada en código.
+- No existe todavía el flujo de importación atómica de contextos.
+
+### 0.1 Objetivo activo autorizado
+
+Implementar el flujo `context-deploy`:
+
+```text
+DP-API/scripts/context-deploy.sh
+→ SBM-AI-ASSISTANT
+→ ingestión de contextos Markdown
+→ embeddings
+→ Qdrant sbm_contexts
+→ context-package.zip
+→ SYS_PROMPT.md parametrizado
+→ ChatGPT
+→ ZIP revisado
+→ importación atómica
+→ reindexación
+```
+
+La primera fase técnica dentro de este repositorio será diseñar e implementar:
+
+```text
+POST /contexts/export
+```
+
+El endpoint debe aceptar, como mínimo:
+
+```text
+project_name
+workflow
+project_root
+source_context_root
+output_directory
+```
+
+Debe generar:
+
+```text
+context-package.zip
+SYS_PROMPT.md
+manifest.json
+```
+
+### 0.2 Colecciones Qdrant
+
+Separación obligatoria:
+
+```text
+sbm_docs
+→ Confluence y documentación empresarial
+
+sbm_contexts
+→ contextos globales y por proyecto
+```
+
+No mezclar ambas fuentes en una misma colección.
+
+### 0.3 Restricciones del flujo
+
+`context-deploy` puede actualizar únicamente:
+
+```text
+SBM-SUITE/PROJECT_CONTEXT.md
+SBM-SUITE/README.md
+SBM-SUITE/context/SUITE_CONTEXT.md
+<project>/context/PROJECT_CONTEXT.md
+<project>/README.md
+```
+
+No puede modificar:
+
+```text
+QA_CONTEXT.md
+BUSINESS_CONTEXT.md
+DEPLOY_CONTEXT.md
+SYS_PROMPT.md
+```
+
+La actualización de QA tendrá un flujo futuro separado llamado:
+
+```text
+qa-context-update
+```
+
 
 ## 1. Objetivo del proyecto
 
@@ -159,7 +280,7 @@ Confluence
 → Slack thread
 ```
 
-Posteriormente se completó el refactor arquitectónico base planificado para el MVP: rutas separadas, `main.py` reducido a bootstrap, configuración centralizada en `settings.py`, prompt RAG extraído a `app/prompts` y primer contrato Pydantic aplicado al endpoint RAG. La siguiente fase es iniciar la capa `tools` y la integración de lectura con `dp-api`.
+Posteriormente se completó el refactor arquitectónico base planificado para el MVP: rutas separadas, `main.py` reducido a bootstrap, configuración centralizada en `settings.py`, prompt RAG extraído a `app/prompts` y primer contrato Pydantic aplicado al endpoint RAG. La siguiente fase autorizada es implementar `context-deploy`; la capa de Tools para `dp-api` queda pendiente después de estabilizar este flujo.
 
 ### 2.2 Qué ya funciona
 

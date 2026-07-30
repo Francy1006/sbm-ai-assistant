@@ -1,9 +1,15 @@
 {
-    "workbench.colorTheme": "Default Dark+",
-    "workbench.colorCustomizations": {
-      "titleBar.activeBackground": "#FFC400",
-      "titleBar.activeForeground": "#000000",
-      "titleBar.inactiveBackground": "#8A6A00",
-      "titleBar.inactiveForeground": "#e0e0e0"
-    }
+  "workbench.colorTheme": "Default Dark+",
+  "workbench.colorCustomizations": {
+    "editor.background": "#0D0D0D",
+    "sideBar.background": "#111111",
+    "activityBar.background": "#0A0A0A",
+    "panel.background": "#0D0D0D",
+    "terminal.background": "#080808",
+
+    "titleBar.activeBackground": "#FFC400",
+    "titleBar.activeForeground": "#000000",
+    "titleBar.inactiveBackground": "#8A6A00",
+    "titleBar.inactiveForeground": "#E0E0E0"
   }
+}

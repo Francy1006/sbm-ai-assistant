@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -15,24 +17,63 @@ from app.config.settings import (
 )
 
 COLLECTION_NAME = QDRANT_COLLECTION_NAME
+DEFAULT_VECTOR_SIZE = 1024
+DEFAULT_DISTANCE = Distance.COSINE
 
 client = QdrantClient(url=QDRANT_URL)
 
 
-def create_collection():
-    if not client.collection_exists(COLLECTION_NAME):
+def collection_exists(collection_name: str) -> bool:
+    return client.collection_exists(collection_name)
+
+
+def create_collection(
+    collection_name: str | None = None,
+    vector_size: int = DEFAULT_VECTOR_SIZE,
+    distance: Distance = DEFAULT_DISTANCE,
+):
+    target_collection = collection_name or COLLECTION_NAME
+
+    if not client.collection_exists(target_collection):
         client.create_collection(
-            collection_name=COLLECTION_NAME,
+            collection_name=target_collection,
             vectors_config=VectorParams(
-                size=1024,
-                distance=Distance.COSINE
+                size=vector_size,
+                distance=distance,
             )
+        )
+        return
+
+    collection_info = client.get_collection(target_collection)
+    vectors_config = collection_info.config.params.vectors
+
+    if isinstance(vectors_config, dict):
+        raise ValueError(
+            f"Collection '{target_collection}' uses named vectors; "
+            "a single unnamed vector is required"
+        )
+
+    if (
+        vectors_config.size != vector_size
+        or vectors_config.distance != distance
+    ):
+        raise ValueError(
+            f"Collection '{target_collection}' has incompatible vector "
+            f"configuration: expected size={vector_size}, distance={distance}"
         )
 
 
-def save_embedding(point_id: str, vector: list[float], text: str, metadata: dict):
+def save_embedding(
+    point_id: str,
+    vector: list[float],
+    text: str,
+    metadata: dict,
+    collection_name: str | None = None,
+):
+    target_collection = collection_name or COLLECTION_NAME
+
     client.upsert(
-        collection_name=COLLECTION_NAME,
+        collection_name=target_collection,
         points=[
             PointStruct(
                 id=point_id,
@@ -46,11 +87,95 @@ def save_embedding(point_id: str, vector: list[float], text: str, metadata: dict
     )
 
 
-def search_similar(vector: list[float], limit: int = 3):
+def save_embeddings(
+    points: list[PointStruct],
+    collection_name: str | None = None,
+):
+    if not points:
+        return
+
+    client.upsert(
+        collection_name=collection_name or COLLECTION_NAME,
+        points=points,
+        wait=True,
+    )
+
+
+def scroll_all_points(
+    scroll_filter: Filter,
+    collection_name: str | None = None,
+) -> list:
+    target_collection = collection_name or COLLECTION_NAME
+    points = []
+    offset = None
+    seen_offsets = set()
+
+    while True:
+        batch, offset = client.scroll(
+            collection_name=target_collection,
+            scroll_filter=scroll_filter,
+            with_payload=True,
+            with_vectors=False,
+            limit=100,
+            offset=offset,
+        )
+        points.extend(batch)
+
+        if offset is None:
+            return points
+
+        offset_marker = str(offset)
+
+        if offset_marker in seen_offsets:
+            raise RuntimeError(
+                f"Qdrant returned a repeated scroll offset for "
+                f"collection '{target_collection}'"
+            )
+
+        seen_offsets.add(offset_marker)
+
+
+def deactivate_points(
+    point_ids: list,
+    collection_name: str | None = None,
+):
+    if not point_ids:
+        return
+
+    client.set_payload(
+        collection_name=collection_name or COLLECTION_NAME,
+        payload={"is_active": False},
+        points=point_ids,
+        wait=True,
+    )
+
+
+def update_points_payload(
+    point_ids: list,
+    payload: dict,
+    collection_name: str | None = None,
+):
+    if not point_ids:
+        return
+
+    client.set_payload(
+        collection_name=collection_name or COLLECTION_NAME,
+        payload=payload,
+        points=point_ids,
+        wait=True,
+    )
+
+
+def search_similar(
+    vector: list[float],
+    limit: int = 3,
+    collection_name: str | None = None,
+    query_filter: Filter | None = None,
+):
     response = client.query_points(
-        collection_name=COLLECTION_NAME,
+        collection_name=collection_name or COLLECTION_NAME,
         query=vector,
-        query_filter=Filter(
+        query_filter=query_filter or Filter(
             must=[
                 FieldCondition(
                     key="is_active",
@@ -229,6 +354,3 @@ def cleanup_old_inactive_versions(page_id: str, keep_last_versions: int = 1):
         )
 
     return len(point_ids_to_delete) 
-
-
-

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.api.routes.ai import router as ai_router
 from app.api.routes.confluence import router as confluence_router
+from app.api.routes.contexts import router as contexts_router
 from app.api.routes.health import router as health_router
 from app.api.routes.rag import router as rag_router
 from app.api.routes.slack import router as slack_router
@@ -29,3 +30,4 @@ app.include_router(rag_router)
 app.include_router(slack_router)
 app.include_router(confluence_router)
 app.include_router(ai_router)
+app.include_router(contexts_router)

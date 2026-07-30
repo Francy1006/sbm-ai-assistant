@@ -4,6 +4,29 @@ import os
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME")
 
+# EMBEDDINGS / CONTEXT RAG
+EMBEDDING_MODEL_NAME = os.getenv(
+    "EMBEDDING_MODEL_NAME",
+    "intfloat/multilingual-e5-large",
+)
+CONTEXT_EXPORT_TOP_K = int(os.getenv("CONTEXT_EXPORT_TOP_K", "8"))
+CONTEXT_UPGRADE_INPUT_DIRECTORY = os.getenv(
+    "CONTEXT_UPGRADE_INPUT_DIRECTORY",
+    "/suite/context/input",
+)
+CONTEXT_UPGRADE_BACKUP_ROOT = os.getenv(
+    "CONTEXT_UPGRADE_BACKUP_ROOT",
+    "/suite/context/temp/backup",
+)
+CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT = os.getenv(
+    "CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT",
+    "/suite/context",
+)
+CONTEXT_UPGRADE_PROJECT_ROOT = os.getenv(
+    "CONTEXT_UPGRADE_PROJECT_ROOT",
+    "/suite/DP-API",
+)
+
 # COHERE
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 COHERE_MODEL = os.getenv("COHERE_MODEL")

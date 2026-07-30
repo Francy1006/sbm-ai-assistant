@@ -1,7 +1,24 @@
+from functools import lru_cache
+
 from fastembed import TextEmbedding
 
-model = TextEmbedding(model_name="intfloat/multilingual-e5-large")
+from app.config.settings import EMBEDDING_MODEL_NAME
+
+
+@lru_cache(maxsize=1)
+def _get_model() -> TextEmbedding:
+    return TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
+
+
+def create_embeddings(texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
+
+    return [
+        embedding.tolist()
+        for embedding in _get_model().embed(texts, batch_size=16)
+    ]
+
 
 def create_embedding(text: str) -> list[float]:
-    embeddings = list(model.embed([text]))
-    return embeddings[0].tolist()
+    return create_embeddings([text])[0]
