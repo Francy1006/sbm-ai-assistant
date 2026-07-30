@@ -27,7 +27,10 @@ from app.services.contexts.zip_export_service import create_context_package
 
 logger = logging.getLogger("uvicorn.error.context_export.service")
 logger.setLevel(logging.INFO)
+
 GIT_COMMAND_TIMEOUT_SECONDS = 10
+PROJECT_TREE_FILENAME = "project-tree.txt"
+MAX_PROJECT_TREE_BYTES = 2 * 1024 * 1024
 
 
 class ContextExportInfrastructureError(RuntimeError):
@@ -61,7 +64,8 @@ def _is_safe_changed_file(path: str) -> bool:
         return False
 
     return not any(
-        part == ".env" or part.startswith(".env.") for part in candidate.parts
+        part == ".env" or part.startswith(".env.")
+        for part in candidate.parts
     )
 
 
@@ -74,6 +78,7 @@ def _collect_changed_files(project_root: Path) -> list[str]:
         project_root,
         ["ls-files", "--others", "--exclude-standard"],
     ).splitlines()
+
     return sorted(
         {
             path.strip()
@@ -108,6 +113,41 @@ def _collect_git_log(project_root: Path) -> str:
     )
 
 
+def _collect_project_tree(project_root: Path) -> str:
+    project_tree_path = project_root / PROJECT_TREE_FILENAME
+
+    if not project_tree_path.exists():
+        return ""
+
+    if (
+        not project_tree_path.is_file()
+        or project_tree_path.is_symlink()
+    ):
+        raise ContextValidationError(
+            f"{PROJECT_TREE_FILENAME} must be a regular file"
+        )
+
+    try:
+        size = project_tree_path.stat().st_size
+    except OSError as exc:
+        raise ContextValidationError(
+            f"Unable to inspect {PROJECT_TREE_FILENAME}"
+        ) from exc
+
+    if size > MAX_PROJECT_TREE_BYTES:
+        raise ContextValidationError(
+            f"{PROJECT_TREE_FILENAME} exceeds "
+            f"{MAX_PROJECT_TREE_BYTES} bytes"
+        )
+
+    try:
+        return project_tree_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise ContextValidationError(
+            f"Unable to read {PROJECT_TREE_FILENAME} as UTF-8"
+        ) from exc
+
+
 def export_contexts(
     request: ContextExportRequest,
 ) -> ContextExportResponse:
@@ -118,17 +158,22 @@ def export_contexts(
         format_context_path=request.format_context_path,
         output_directory=request.output_directory,
     )
+
     logger.info(
         "[CONTEXT_EXPORT] file discovery start project=%s",
         project_name,
     )
+
     sources, errors = discover_context_sources(project_name, paths)
+
     logger.info(
-        "[CONTEXT_EXPORT] file discovery complete project=%s " "sources=%d errors=%d",
+        "[CONTEXT_EXPORT] file discovery complete project=%s "
+        "sources=%d errors=%d",
         project_name,
         len(sources),
         len(errors),
     )
+
     chunks_by_source = []
     markdown_by_source_path = {}
 
@@ -137,11 +182,12 @@ def export_contexts(
             "[CONTEXT_EXPORT] file reading start source=%s",
             source.source_path,
         )
+
         try:
             markdown = source.source_path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise ContextValidationError(
-                f"Unable to read allowed Markdown file as UTF-8: "
+                "Unable to read allowed Markdown file as UTF-8: "
                 f"{source.archive_path}"
             ) from exc
 
@@ -154,15 +200,18 @@ def export_contexts(
             "[CONTEXT_EXPORT] chunking start source=%s",
             source.source_path,
         )
+
         chunks = split_markdown_into_chunks(
             text=markdown,
             default_section=source.source_path.name,
         )
+
         logger.info(
             "[CONTEXT_EXPORT] chunking complete source=%s chunks=%d",
             source.source_path,
             len(chunks),
         )
+
         chunks_by_source.append((source, markdown, chunks))
         markdown_by_source_path[source.source_path] = markdown
 
@@ -171,10 +220,12 @@ def export_contexts(
             "Allowed Markdown context files contain no indexable content"
         )
 
-    full_context_sources, missing_full_context_files = resolve_full_context_sources(
-        sources=sources,
-        project_name=project_name,
-        paths=paths,
+    full_context_sources, missing_full_context_files = (
+        resolve_full_context_sources(
+            sources=sources,
+            project_name=project_name,
+            paths=paths,
+        )
     )
     full_context_files = [
         FullContextFile(
@@ -184,6 +235,7 @@ def export_contexts(
         )
         for source in full_context_sources
     ]
+
     errors.extend(
         f"Missing authorized full context file: {archive_path}"
         for archive_path in missing_full_context_files
@@ -209,7 +261,9 @@ def export_contexts(
             "Context indexing failed for project=%s",
             project_name,
         )
-        raise ContextExportInfrastructureError("Context indexing failed") from exc
+        raise ContextExportInfrastructureError(
+            "Context indexing failed"
+        ) from exc
 
     try:
         requested_changed_files = (
@@ -217,9 +271,13 @@ def export_contexts(
             if request.changed_files is not None
             else _collect_changed_files(paths.project_root)
         )
-        changed_files = [
-            path for path in requested_changed_files if _is_safe_changed_file(path)
-        ]
+        changed_files = sorted(
+            {
+                path.strip()
+                for path in requested_changed_files
+                if path.strip() and _is_safe_changed_file(path.strip())
+            }
+        )
         git_diff = (
             request.git_diff
             if request.git_diff is not None
@@ -228,23 +286,31 @@ def export_contexts(
         qa_results = request.qa_results or ""
         change_summary = request.change_summary or ""
         git_log = _collect_git_log(paths.project_root)
+        project_tree = _collect_project_tree(paths.project_root)
+
         query = build_context_query(
             project_name=project_name,
             change_summary=change_summary,
             changed_files=changed_files,
             git_diff=git_diff,
             qa_results=qa_results,
+            project_tree=project_tree,
         )
+
         logger.info(
-            "[CONTEXT_EXPORT] relevant context retrieval start " "project=%s top_k=%d",
+            "[CONTEXT_EXPORT] relevant context retrieval start "
+            "project=%s top_k=%d project_tree=%s",
             project_name,
             CONTEXT_EXPORT_TOP_K,
+            "included" if project_tree else "missing",
         )
+
         retrieved_chunks = retrieve_relevant_context_chunks(
             project_name=project_name,
             query=query,
             top_k=CONTEXT_EXPORT_TOP_K,
         )
+
         logger.info(
             "[CONTEXT_EXPORT] relevant context retrieval complete "
             "project=%s chunks=%d",
@@ -271,6 +337,7 @@ def export_contexts(
             git_diff=git_diff,
             git_log=git_log,
             qa_results=qa_results,
+            project_tree=project_tree,
             top_k=CONTEXT_EXPORT_TOP_K,
             full_context_files=full_context_files,
             missing_full_context_files=missing_full_context_files,
@@ -280,7 +347,9 @@ def export_contexts(
             "Context ZIP creation failed for project=%s",
             project_name,
         )
-        raise ContextExportInfrastructureError("Context ZIP creation failed") from exc
+        raise ContextExportInfrastructureError(
+            "Context ZIP creation failed"
+        ) from exc
 
     logger.info(
         "[CONTEXT_EXPORT] response construction start project=%s",
@@ -297,6 +366,7 @@ def export_contexts(
         collection_name=CONTEXT_COLLECTION_NAME,
         errors=errors,
     )
+
     logger.info(
         "[CONTEXT_EXPORT] response construction complete project=%s "
         "sources=%d chunks=%d",
@@ -304,4 +374,5 @@ def export_contexts(
         indexed_source_count,
         chunk_count,
     )
+
     return response

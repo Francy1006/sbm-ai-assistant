@@ -1,0 +1,445 @@
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Iterable
+
+from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+from app.config.settings import DOCUMENTATION_EXPORT_TOP_K
+from app.services.contexts.models import RetrievedContextChunk
+from app.services.documentation.documentation_index_service import (
+    DOCUMENTATION_COLLECTION_NAME,
+)
+from app.services.embedding_service import create_embedding
+from app.services.qdrant_service import search_similar
+
+
+GLOBAL_REPOSITORY = "SBM-SUITE"
+DOCUMENTATION_WORKFLOW = "documentation-deploy"
+
+_DOCUMENTATION_DOMAIN_HINTS: tuple[
+    tuple[tuple[str, ...], str],
+    ...,
+] = (
+    (
+        (
+            "readme.md",
+            "project_context.md",
+            "project-tree.txt",
+            "project_tree",
+        ),
+        (
+            "Project overview, current state, architecture, "
+            "structure and roadmap"
+        ),
+    ),
+    (
+        (
+            "qa_context.md",
+            "qa-results.md",
+            "coverage.xml",
+            "sonar",
+            "pytest",
+            "test_",
+            "/tests/",
+        ),
+        (
+            "QA and Testing documentation, coverage, "
+            "SonarQube, defects and validation evidence"
+        ),
+    ),
+    (
+        (
+            "suite_context.md",
+            "docker-compose",
+            "settings.py",
+            "urls.py",
+            "views.py",
+            "serializers.py",
+        ),
+        (
+            "Architecture, applications, technologies, "
+            "APIs, runtime and integrations"
+        ),
+    ),
+    (
+        (
+            "business_context.md",
+            "products/",
+            "material/",
+            "service/",
+            "catalog/",
+            "ticket/",
+            "pricing/",
+            "providers/",
+            "branches/",
+        ),
+        (
+            "Business capabilities, entities, brands, "
+            "processes and operating rules"
+        ),
+    ),
+    (
+        (
+            "security_context.md",
+            "auth",
+            "permission",
+            "role",
+            "token",
+            "cors",
+            "secret",
+        ),
+        (
+            "Security and DevSecOps documentation, "
+            "identity, authorization, isolation and secrets"
+        ),
+    ),
+    (
+        (
+            "data_context.md",
+            "models.py",
+            "flyway",
+            "dbml",
+            "postgres",
+            "migration",
+        ),
+        (
+            "Data Architecture documentation, schemas, "
+            "entities, relations, migrations and persistence"
+        ),
+    ),
+    (
+        (
+            "decisions_context.md",
+            "adr",
+            "decision",
+        ),
+        (
+            "Architecture and product decisions"
+        ),
+    ),
+    (
+        (
+            "documentation/",
+            "documentation_context",
+            "documentation-deploy",
+            "documentation-upgrade",
+        ),
+        (
+            "Documentation workflow, governance, "
+            "page structure and synchronization"
+        ),
+    ),
+    (
+        (
+            "context/",
+            "context-deploy",
+            "context-upgrade",
+            "sbm_contexts",
+        ),
+        (
+            "Context workflow and its relationship "
+            "with generated documentation"
+        ),
+    ),
+    (
+        (
+            "embedding",
+            "qdrant",
+            "rag",
+            "tool",
+            "llm",
+            "ai-assistant",
+        ),
+        (
+            "AI Engineering documentation, RAG, "
+            "collections, models and Tools"
+        ),
+    ),
+    (
+        (
+            "deploy",
+            "docker",
+            "container",
+            "network",
+            "health",
+            "environment",
+        ),
+        (
+            "DevOps and deployment documentation"
+        ),
+    ),
+)
+
+
+def _normalized_changed_files(
+    changed_files: Iterable[str],
+) -> list[str]:
+    return [
+        file_path.strip()
+        for file_path in changed_files
+        if file_path and file_path.strip()
+    ]
+
+
+def _documentation_domain_hints(
+    changed_files: list[str],
+) -> list[str]:
+    normalized = [
+        file_path.lower()
+        for file_path in changed_files
+    ]
+    hints: list[str] = []
+
+    for patterns, description in _DOCUMENTATION_DOMAIN_HINTS:
+        if any(
+            pattern in file_path
+            for file_path in normalized
+            for pattern in patterns
+        ):
+            hints.append(description)
+
+    return list(dict.fromkeys(hints))
+
+
+def build_documentation_query(
+    project_name: str,
+    change_summary: str | None,
+    changed_files: list[str],
+    git_diff: str,
+    qa_results: str,
+    documentation_files: list[str] | None = None,
+    project_tree: str = "",
+) -> str:
+    normalized_project_name = project_name.strip()
+
+    if not normalized_project_name:
+        raise ValueError(
+            "project_name must not be empty"
+        )
+
+    normalized_files = _normalized_changed_files(
+        changed_files
+    )
+    normalized_documentation_files = (
+        _normalized_changed_files(
+            documentation_files or []
+        )
+    )
+
+    sections = [
+        f"Project: {normalized_project_name}",
+        (
+            "Retrieve documentation relevant to the current "
+            "change. Prioritize current state, architecture, "
+            "business behavior, APIs, QA, security, data, "
+            "deployment, AI engineering, roadmap, related "
+            "pages and documentation workflow."
+        ),
+    ]
+
+    if change_summary and change_summary.strip():
+        sections.append(
+            "Change summary:\n"
+            f"{change_summary.strip()}"
+        )
+
+    if normalized_files:
+        sections.append(
+            "Changed files:\n"
+            + "\n".join(normalized_files)
+        )
+
+        domain_hints = _documentation_domain_hints(
+            normalized_files
+        )
+        if domain_hints:
+            sections.append(
+                "Documentation domains probably affected:\n"
+                + "\n".join(
+                    f"- {hint}"
+                    for hint in domain_hints
+                )
+            )
+
+    if normalized_documentation_files:
+        sections.append(
+            "Existing authorized documentation files:\n"
+            + "\n".join(
+                normalized_documentation_files
+            )
+        )
+
+    if git_diff.strip():
+        sections.append(
+            f"Git diff:\n{git_diff.strip()}"
+        )
+
+    if qa_results.strip():
+        sections.append(
+            "QA results:\n"
+            f"{qa_results.strip()}"
+        )
+
+    if project_tree.strip():
+        sections.append(
+            "Current project structure:\n"
+            f"{project_tree.strip()}"
+        )
+
+    if len(sections) == 2:
+        sections.append(
+            "Current change has no additional details."
+        )
+
+    return "\n\n".join(sections)
+
+
+def _scope_filter(
+    project_name: str,
+    global_scope: bool,
+) -> Filter:
+    repository_condition = FieldCondition(
+        key="repository",
+        match=MatchValue(
+            value=GLOBAL_REPOSITORY
+        ),
+    )
+    must = [
+        FieldCondition(
+            key="project_name",
+            match=MatchValue(
+                value=project_name
+            ),
+        ),
+        FieldCondition(
+            key="workflow",
+            match=MatchValue(
+                value=DOCUMENTATION_WORKFLOW
+            ),
+        ),
+        FieldCondition(
+            key="is_active",
+            match=MatchValue(value=True),
+        ),
+    ]
+
+    if global_scope:
+        must.append(repository_condition)
+        return Filter(must=must)
+
+    return Filter(
+        must=must,
+        must_not=[repository_condition],
+    )
+
+
+def _deduplication_key(
+    point,
+) -> tuple[str, str, str]:
+    payload = point.payload or {}
+    text = payload.get("text", "")
+    text_hash = hashlib.sha256(
+        text.encode("utf-8")
+    ).hexdigest()
+
+    return (
+        payload.get("archive_path", ""),
+        payload.get("section", ""),
+        text_hash,
+    )
+
+
+def retrieve_relevant_documentation_chunks(
+    project_name: str,
+    query: str,
+    top_k: int = DOCUMENTATION_EXPORT_TOP_K,
+) -> list[RetrievedContextChunk]:
+    normalized_project_name = project_name.strip()
+    normalized_query = query.strip()
+
+    if not normalized_project_name:
+        raise ValueError(
+            "project_name must not be empty"
+        )
+
+    if not normalized_query:
+        raise ValueError(
+            "query must not be empty"
+        )
+
+    if top_k < 1:
+        raise ValueError(
+            "top_k must be greater than zero"
+        )
+
+    vector = create_embedding(
+        normalized_query
+    )
+    candidates = []
+
+    for global_scope in (True, False):
+        candidates.extend(
+            search_similar(
+                vector=vector,
+                limit=top_k,
+                collection_name=(
+                    DOCUMENTATION_COLLECTION_NAME
+                ),
+                query_filter=_scope_filter(
+                    project_name=(
+                        normalized_project_name
+                    ),
+                    global_scope=global_scope,
+                ),
+            )
+        )
+
+    candidates.sort(
+        key=lambda point: point.score,
+        reverse=True,
+    )
+
+    unique_chunks: list[
+        RetrievedContextChunk
+    ] = []
+    seen: set[
+        tuple[str, str, str]
+    ] = set()
+
+    for point in candidates:
+        key = _deduplication_key(point)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        payload = point.payload or {}
+
+        unique_chunks.append(
+            RetrievedContextChunk(
+                point_id=str(point.id),
+                source_path=payload.get(
+                    "source_path",
+                    "",
+                ),
+                archive_path=payload.get(
+                    "archive_path",
+                    "",
+                ),
+                section=payload.get(
+                    "section",
+                    "",
+                ),
+                score=float(point.score),
+                content=payload.get(
+                    "text",
+                    "",
+                ),
+            )
+        )
+
+        if len(unique_chunks) >= top_k:
+            break
+
+    return unique_chunks

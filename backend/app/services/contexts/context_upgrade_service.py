@@ -32,9 +32,13 @@ FORMAT_CONTEXT_FILENAME = "FORMAT_CONTEXT.md"
 FORMAT_CONTRACT_SECTIONS = {
     "global_project_context": "## 2. Global `PROJECT_CONTEXT.md`",
     "global_suite_context": "## 3. Global `SUITE_CONTEXT.md`",
-    "global_readme": "## 10. Project and suite `README.md`",
-    "project_project_context": "## 7. Project `context/PROJECT_CONTEXT.md`",
-    "project_readme": "## 10. Project and suite `README.md`",
+    "global_business_context": "## 4. Global `BUSINESS_CONTEXT.md`",
+    "global_qa_context": "## 5. Global `QA_CONTEXT.md`",
+    "global_security_context": "## 6. Global `SECURITY_CONTEXT.md`",
+    "global_data_context": "## 7. Global `DATA_CONTEXT.md`",
+    "global_decisions_context": "## 8. Global `DECISIONS_CONTEXT.md`",
+    "project_project_context": "## 9. Project `context/PROJECT_CONTEXT.md`",
+    "project_qa_context": "## 10. Project `context/QA_CONTEXT.md`",
 }
 INFORMATIONAL_FILES = frozenset(
     {
@@ -52,27 +56,41 @@ class ContextUpgradeOperationalError(RuntimeError):
 
 def _replaceable_paths(project_name: str) -> dict[str, tuple[str, str]]:
     return {
-        "SBM-SUITE/PROJECT_CONTEXT.md": (
+        "SBM-SUITE/context/PROJECT_CONTEXT.md": (
             "suite",
             "PROJECT_CONTEXT.md",
-        ),
-        "SBM-SUITE/README.md": (
-            "suite",
-            "README.md",
         ),
         "SBM-SUITE/context/SUITE_CONTEXT.md": (
             "suite",
             "SUITE_CONTEXT.md",
         ),
-        (
-            f"SBM-SUITE/{project_name}/context/PROJECT_CONTEXT.md"
-        ): (
+        "SBM-SUITE/context/BUSINESS_CONTEXT.md": (
+            "suite",
+            "BUSINESS_CONTEXT.md",
+        ),
+        "SBM-SUITE/context/QA_CONTEXT.md": (
+            "suite",
+            "QA_CONTEXT.md",
+        ),
+        "SBM-SUITE/context/SECURITY_CONTEXT.md": (
+            "suite",
+            "SECURITY_CONTEXT.md",
+        ),
+        "SBM-SUITE/context/DATA_CONTEXT.md": (
+            "suite",
+            "DATA_CONTEXT.md",
+        ),
+        "SBM-SUITE/context/DECISIONS_CONTEXT.md": (
+            "suite",
+            "DECISIONS_CONTEXT.md",
+        ),
+        f"SBM-SUITE/{project_name}/context/PROJECT_CONTEXT.md": (
             "project",
             "context/PROJECT_CONTEXT.md",
         ),
-        f"SBM-SUITE/{project_name}/README.md": (
+        f"SBM-SUITE/{project_name}/context/QA_CONTEXT.md": (
             "project",
-            "README.md",
+            "context/QA_CONTEXT.md",
         ),
     }
 
@@ -372,12 +390,27 @@ def validate_upgrade_manifest(
 
     expected_updated_files = actual_files - {"manifest.json"}
 
+    replaceable_updated_files = expected_updated_files & set(replaceable_paths)
+
+    if not replaceable_updated_files:
+        raise ContextValidationError(
+            "Upgrade ZIP must contain at least one authorized context file"
+        )
+
     if set(updated_files) != expected_updated_files:
         raise ContextValidationError(
             "manifest.updated_files must match non-manifest ZIP files"
         )
 
     hashed_files = expected_updated_files
+
+    if any(
+        path not in replaceable_paths and path not in INFORMATIONAL_FILES
+        for path in hashed_files
+    ):
+        raise ContextValidationError(
+            "Upgrade ZIP contains an unsupported hashed file"
+        )
 
     if set(content_hashes) != hashed_files:
         raise ContextValidationError(
@@ -483,14 +516,18 @@ def _contract_key_for_archive_path(
     archive_path: str,
     project_name: str,
 ) -> str | None:
-    if archive_path == "SBM-SUITE/PROJECT_CONTEXT.md":
-        return "global_project_context"
+    global_paths = {
+        "SBM-SUITE/context/PROJECT_CONTEXT.md": "global_project_context",
+        "SBM-SUITE/context/SUITE_CONTEXT.md": "global_suite_context",
+        "SBM-SUITE/context/BUSINESS_CONTEXT.md": "global_business_context",
+        "SBM-SUITE/context/QA_CONTEXT.md": "global_qa_context",
+        "SBM-SUITE/context/SECURITY_CONTEXT.md": "global_security_context",
+        "SBM-SUITE/context/DATA_CONTEXT.md": "global_data_context",
+        "SBM-SUITE/context/DECISIONS_CONTEXT.md": "global_decisions_context",
+    }
 
-    if archive_path == "SBM-SUITE/context/SUITE_CONTEXT.md":
-        return "global_suite_context"
-
-    if archive_path == "SBM-SUITE/README.md":
-        return "global_readme"
+    if archive_path in global_paths:
+        return global_paths[archive_path]
 
     if (
         archive_path
@@ -498,8 +535,11 @@ def _contract_key_for_archive_path(
     ):
         return "project_project_context"
 
-    if archive_path == f"SBM-SUITE/{project_name}/README.md":
-        return "project_readme"
+    if (
+        archive_path
+        == f"SBM-SUITE/{project_name}/context/QA_CONTEXT.md"
+    ):
+        return "project_qa_context"
 
     return None
 
@@ -869,7 +909,7 @@ def upgrade_contexts(
             suite_root=suite_root,
         )
 
-        timestamp = now().strftime("%Y%m%d_%H%M%S")
+        timestamp = now().strftime("%Y%m%d_%H%M%S_%f")
         backup_directory, targets = create_upgrade_backup(
             staging_directory=staging_directory,
             updated_files=updated_files,

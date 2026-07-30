@@ -20,13 +20,19 @@ from app.services.contexts.file_discovery_service import (
 )
 
 
-GLOBAL_PROJECT = "SBM-SUITE/PROJECT_CONTEXT.md"
-GLOBAL_README = "SBM-SUITE/README.md"
+GLOBAL_PROJECT = "SBM-SUITE/context/PROJECT_CONTEXT.md"
 SUITE_CONTEXT = "SBM-SUITE/context/SUITE_CONTEXT.md"
+BUSINESS_CONTEXT = "SBM-SUITE/context/BUSINESS_CONTEXT.md"
+GLOBAL_QA_CONTEXT = "SBM-SUITE/context/QA_CONTEXT.md"
+SECURITY_CONTEXT = "SBM-SUITE/context/SECURITY_CONTEXT.md"
+DATA_CONTEXT = "SBM-SUITE/context/DATA_CONTEXT.md"
+DECISIONS_CONTEXT = "SBM-SUITE/context/DECISIONS_CONTEXT.md"
 PROJECT_CONTEXT = (
     "SBM-SUITE/dp-api/context/PROJECT_CONTEXT.md"
 )
-PROJECT_README = "SBM-SUITE/dp-api/README.md"
+PROJECT_QA_CONTEXT = (
+    "SBM-SUITE/dp-api/context/QA_CONTEXT.md"
+)
 EXECUTIVE_README = "EXECUTIVE_README.md"
 COMMIT_MESSAGE = "COMMIT_MESSAGE.md"
 USER_PROMPT = "USER_PROMPT.md"
@@ -38,23 +44,245 @@ def _write(path: Path, content: str):
     path.write_text(content, encoding="utf-8")
 
 
-FORMAT_CONTRACT = '# FORMAT_CONTEXT.md\n\n> **Purpose**\n>\n> Canonical structure contract for every SBM Suite context file.\n> Context generation and upgrade processes must preserve these formats exactly.\n\n## 1. Global rules\n\n1. Preserve the exact heading names and order defined here.\n2. Do not rename, merge, split, reorder or remove required sections.\n3. Add content only inside the matching section.\n4. Preserve the metadata block at the beginning of each file.\n5. Preserve Markdown lists, tables, code blocks and path formatting.\n6. Do not duplicate information across sections.\n7. Do not create unsupported facts, tests, migrations, deployments or decisions.\n8. When evidence is insufficient, keep the existing content unchanged.\n9. A structural change requires an explicit update to this file.\n10. If a complete source file is unavailable, do not generate a replacement.\n11. Protected context files remain read-only unless their workflow explicitly allows modification.\n12. All dates use `YYYY-MM-DD`.\n\n---\n\n## 2. Global `PROJECT_CONTEXT.md`\n\nRequired structure:\n\n```text\n# PROJECT_CONTEXT.md\n\n> Last updated\n> Purpose\n> Accuracy note\n\n## 1. Executive summary\n## 2. Current suite objective\n## 3. Projects and ownership\n## 4. Global architecture\n## 5. Shared infrastructure\n## 6. Cross-project integrations\n## 7. Context deployment and upgrade workflow\n## 8. Current implementation status\n## 9. Validated decisions\n## 10. Accepted risks and constraints\n## 11. Completed work\n## 12. Pending work\n## 13. Required behavior\n## 14. Historical decisions\n## 15. Document boundary\n```\n\nSection rules:\n\n- `Executive summary`: concise suite state.\n- `Current suite objective`: active global objective only.\n- `Projects and ownership`: project responsibilities and boundaries.\n- `Global architecture`: suite-level architecture only.\n- `Shared infrastructure`: shared databases, networks, containers and services.\n- `Cross-project integrations`: contracts and data flows between projects.\n- `Context deployment and upgrade workflow`: context lifecycle.\n- `Current implementation status`: current verified state.\n- `Validated decisions`: accepted architectural and product decisions.\n- `Accepted risks and constraints`: known limitations.\n- `Completed work`: completed suite-level milestones.\n- `Pending work`: transversal pending work.\n- `Required behavior`: mandatory operating rules.\n- `Historical decisions`: relevant superseded or historical decisions.\n- `Document boundary`: information intentionally excluded.\n\n---\n\n## 3. Global `SUITE_CONTEXT.md`\n\nRequired structure:\n\n```text\n# SUITE_CONTEXT.md\n\n> Last updated\n> Purpose\n> Accuracy note\n\n## 1. Suite identity\n## 2. Product scope\n## 3. Project map\n## 4. Ownership boundaries\n## 5. Runtime architecture\n## 6. Data architecture\n## 7. API boundaries\n## 8. Authentication and authorization\n## 9. Integrations\n## 10. Infrastructure and containers\n## 11. Shared configuration\n## 12. Context and knowledge architecture\n## 13. Deployment model\n## 14. Security rules\n## 15. Operational constraints\n## 16. Current suite state\n## 17. Context deployment lifecycle\n## 18. Document boundary\n```\n\nSection rules:\n\n- Describe only suite-wide behavior.\n- Do not include project implementation transcripts.\n- Do not duplicate complete project contexts.\n- Record ownership, boundaries and shared flows.\n\n---\n\n## 4. Global `BUSINESS_CONTEXT.md`\n\nRequired structure:\n\n```text\n# BUSINESS_CONTEXT.md\n\n> Last updated\n> Purpose\n> Accuracy note\n\n## 1. Business overview\n## 2. Product vision\n## 3. Business actors\n## 4. Organizations and brands\n## 5. Core business domains\n## 6. Business entities\n## 7. Business rules\n## 8. Commercial flows\n## 9. Pricing and fiscal concepts\n## 10. Inventory and catalog concepts\n## 11. Sales and order concepts\n## 12. Provider and branch concepts\n## 13. Terminology\n## 14. Validated business decisions\n## 15. Business constraints\n## 16. Pending business definitions\n## 17. Document boundary\n```\n\nSection rules:\n\n- Store business meaning, not implementation detail.\n- Technical references are allowed only when required to explain ownership.\n- Do not infer business rules from code alone.\n\n---\n\n## 5. Global `QA_CONTEXT.md`\n\nRequired structure:\n\n```text\n# QA_CONTEXT.md\n\n> Last updated\n> Purpose\n> Accuracy note\n\n## 1. QA strategy\n## 2. Quality gates\n## 3. Test levels\n## 4. Test environments\n## 5. Required evidence\n## 6. Coverage rules\n## 7. Static analysis\n## 8. Security validation\n## 9. API validation\n## 10. Database validation\n## 11. Deployment validation\n## 12. Defect classification\n## 13. Release criteria\n## 14. Accepted exceptions\n## 15. Current QA status\n## 16. Pending QA work\n## 17. Document boundary\n```\n\nSection rules:\n\n- Record only executed and evidenced validation.\n- Never invent coverage, SonarQube, tests or deployments.\n- Separate required QA policy from current QA results.\n\n---\n\n## 6. Global `SYS_PROMPT.md`\n\nRequired structure:\n\n```text\n# SYS_PROMPT.md\n\n## Parameters\n## Objective\n## Required inputs\n## Input meaning\n## Change determination\n## Allowed outputs\n## Protected files\n## Context format contract\n## Context reconstruction rules\n## Project context\n## Suite project context\n## README files\n## QA evidence\n## Commit nomenclature\n## Executive summary\n## Database rules\n## Output rules\n## Manifest\n```\n\nSection rules:\n\n- `Context format contract` must require compliance with this file.\n- The prompt must not redefine formats independently.\n- Output filenames and manifest contracts must be explicit.\n- Protected files must be listed explicitly.\n\n---\n\n## 7. Project `context/PROJECT_CONTEXT.md`\n\nRequired structure:\n\n```text\n# PROJECT_CONTEXT.md\n\n> Last updated\n> Purpose\n> Accuracy note\n\n## 1. Executive summary\n## 2. Project purpose\n## 3. Current objective\n## 4. Scope and ownership\n## 5. Architecture\n## 6. Runtime and containers\n## 7. Configuration\n## 8. Modules\n## 9. Data model ownership\n## 10. API surface\n## 11. Authentication and authorization\n## 12. Integrations\n## 13. Implemented behavior\n## 14. Validation evidence\n## 15. Database and migration impact\n## 16. Security considerations\n## 17. Accepted risks and constraints\n## 18. Completed work\n## 19. Pending work\n## 20. Required behavior\n## 21. Historical decisions\n## 22. Document boundary\n```\n\nSection rules:\n\n- Keep implementation state separate from planned work.\n- Endpoint behavior belongs in `API surface`.\n- Completed implementation belongs in `Implemented behavior`.\n- Test results belong only in `Validation evidence`.\n- Database impact must state explicitly when none exists.\n- Project-specific headings may be added only through an approved update to this format file.\n\n---\n\n## 8. Project `context/QA_CONTEXT.md`\n\nRequired structure:\n\n```text\n# QA_CONTEXT.md\n\n> Last updated\n> Purpose\n> Accuracy note\n\n## 1. Project QA scope\n## 2. Required quality gates\n## 3. Test structure\n## 4. Unit tests\n## 5. Integration tests\n## 6. API tests\n## 7. Database tests\n## 8. Security tests\n## 9. Static analysis\n## 10. Coverage\n## 11. Test data and fixtures\n## 12. Environment requirements\n## 13. Current validated evidence\n## 14. Known defects\n## 15. Accepted exceptions\n## 16. Pending QA work\n## 17. Document boundary\n```\n\nSection rules:\n\n- Distinguish policy from current results.\n- Every result must include its evidence source.\n- Do not overwrite historical evidence without preserving relevant records.\n\n---\n\n## 9. Project `context/DEPLOY_CONTEXT.md`\n\nRequired structure:\n\n```text\n# DEPLOY_CONTEXT.md\n\n> Last updated\n> Purpose\n> Accuracy note\n\n## 1. Deployment overview\n## 2. Environments\n## 3. Runtime topology\n## 4. Containers and services\n## 5. Networks and ports\n## 6. Configuration and secrets\n## 7. Build process\n## 8. Deployment process\n## 9. Database deployment\n## 10. Health checks\n## 11. Observability\n## 12. Rollback\n## 13. Security requirements\n## 14. Operational procedures\n## 15. Current deployment status\n## 16. Known deployment risks\n## 17. Pending deployment work\n## 18. Document boundary\n```\n\nSection rules:\n\n- Never expose secret values.\n- Separate local, development, staging and production behavior.\n- Do not claim a deployment occurred without explicit evidence.\n\n---\n\n## 10. Project and suite `README.md`\n\nRequired structure:\n\n```text\n# Project or suite name\n\n## Overview\n## Purpose\n## Architecture\n## Requirements\n## Configuration\n## Installation\n## Runtime\n## Usage\n## API or interfaces\n## Development\n## Validation\n## Security\n## Known limitations\n## Related documentation\n```\n\nSection rules:\n\n- README files describe stable user-facing behavior.\n- Do not include temporary implementation notes.\n- Do not include historical chat decisions.\n- Omit sections that are genuinely not applicable only when the source README already omits them.\n\n---\n\n## 11. `FORMAT_CONTEXT.md`\n\nRequired structure:\n\n```text\n# FORMAT_CONTEXT.md\n\n## 1. Global rules\n## 2. Global PROJECT_CONTEXT.md\n## 3. Global SUITE_CONTEXT.md\n## 4. Global BUSINESS_CONTEXT.md\n## 5. Global QA_CONTEXT.md\n## 6. Global SYS_PROMPT.md\n## 7. Project context/PROJECT_CONTEXT.md\n## 8. Project context/QA_CONTEXT.md\n## 9. Project context/DEPLOY_CONTEXT.md\n## 10. Project and suite README.md\n## 11. FORMAT_CONTEXT.md\n## 12. Enforcement rules\n## 13. Document boundary\n```\n\n---\n\n## 12. Enforcement rules\n\nEvery context export and upgrade workflow must:\n\n1. Include this file as a protected format contract.\n2. Make it available to RAG retrieval.\n3. Include its complete contents in the export package.\n4. Never allow ChatGPT to modify it through `context-upgrade`.\n5. Validate every generated context against its required heading structure.\n6. Reject files with missing, renamed, duplicated or reordered required headings.\n7. Allow content changes only inside existing sections.\n8. Reject unexpected top-level sections unless this contract explicitly allows them.\n9. Report structural validation errors before replacement.\n10. Keep the input ZIP untouched when validation fails.\n11. Apply replacements only after all files pass structural validation.\n12. Preserve backup, rollback and atomic replacement behavior.\n\n---\n\n## 13. Document boundary\n\nThis file defines structure only.\n\nIt does not define:\n\n- business behavior;\n- architecture decisions;\n- QA results;\n- deployment status;\n- implementation completion;\n- project priorities.\n'
+FORMAT_CONTRACT = """# FORMAT_CONTEXT.md
+
+## 1. Global rules
+
+Preserve exact headings and order.
+
+## 2. Global `PROJECT_CONTEXT.md`
+
+```text
+# PROJECT_CONTEXT.md
+
+## 1. Executive summary
+## 2. Current suite objective
+## 3. Projects and ownership
+## 4. Global architecture
+## 5. Shared infrastructure
+## 6. Cross-project integrations
+## 7. Context deployment and upgrade workflow
+## 8. Current implementation status
+## 9. Validated decisions
+## 10. Accepted risks and constraints
+## 11. Completed work
+## 12. Pending work
+## 13. Required behavior
+## 14. Historical decisions
+## 15. Document boundary
+```
+
+## 3. Global `SUITE_CONTEXT.md`
+
+```text
+# SUITE_CONTEXT.md
+
+## 1. Suite identity
+## 2. Product scope
+## 3. Project map
+## 4. Ownership boundaries
+## 5. Runtime architecture
+## 6. Data architecture
+## 7. API boundaries
+## 8. Authentication and authorization
+## 9. Integrations
+## 10. Infrastructure and containers
+## 11. Shared configuration
+## 12. Context and knowledge architecture
+## 13. Deployment model
+## 14. Security rules
+## 15. Operational constraints
+## 16. Current suite state
+## 17. Context deployment lifecycle
+## 18. Document boundary
+```
+
+## 4. Global `BUSINESS_CONTEXT.md`
+
+```text
+# BUSINESS_CONTEXT.md
+
+## 1. Business overview
+## 2. Product vision
+## 3. Business actors
+## 4. Organizations and brands
+## 5. Core business domains
+## 6. Business entities
+## 7. Business rules
+## 8. Commercial flows
+## 9. Pricing and fiscal concepts
+## 10. Inventory and catalog concepts
+## 11. Sales and order concepts
+## 12. Provider and branch concepts
+## 13. Terminology
+## 14. Validated business decisions
+## 15. Business constraints
+## 16. Pending business definitions
+## 17. Document boundary
+```
+
+## 5. Global `QA_CONTEXT.md`
+
+```text
+# QA_CONTEXT.md
+
+## 1. QA strategy
+## 2. Quality gates
+## 3. Test levels
+## 4. Test environments
+## 5. Required evidence
+## 6. Coverage rules
+## 7. Static analysis
+## 8. Security validation
+## 9. API validation
+## 10. Database validation
+## 11. Deployment validation
+## 12. Defect classification
+## 13. Release criteria
+## 14. Accepted exceptions
+## 15. Current QA status
+## 16. Pending QA work
+## 17. Document boundary
+```
+
+## 6. Global `SECURITY_CONTEXT.md`
+
+```text
+# SECURITY_CONTEXT.md
+
+## 1. Security objectives
+## 2. Security scope
+## 3. Identity and authentication
+## 4. Authorization
+## 5. Secrets and configuration
+## 6. Network security
+## 7. Data protection
+## 8. API security
+## 9. Dependency and supply-chain security
+## 10. Logging and audit
+## 11. Security validation
+## 12. Incident handling
+## 13. Current security status
+## 14. Accepted security risks
+## 15. Pending security work
+## 16. Document boundary
+```
+
+## 7. Global `DATA_CONTEXT.md`
+
+```text
+# DATA_CONTEXT.md
+
+## 1. Data architecture overview
+## 2. Data ownership
+## 3. Datastores
+## 4. Schemas
+## 5. Core entities
+## 6. Relationships
+## 7. Migration ownership
+## 8. Data lifecycle
+## 9. Data integrity
+## 10. Data access
+## 11. Data synchronization
+## 12. Backup and recovery
+## 13. Current data status
+## 14. Accepted data risks
+## 15. Pending data work
+## 16. Document boundary
+```
+
+## 8. Global `DECISIONS_CONTEXT.md`
+
+```text
+# DECISIONS_CONTEXT.md
+
+## 1. Decision governance
+## 2. Active decisions
+## 3. Architecture decisions
+## 4. Product decisions
+## 5. Data decisions
+## 6. Security decisions
+## 7. QA decisions
+## 8. Deployment decisions
+## 9. Superseded decisions
+## 10. Pending decisions
+## 11. Document boundary
+```
+
+## 9. Project `context/PROJECT_CONTEXT.md`
+
+```text
+# PROJECT_CONTEXT.md
+
+## 1. Executive summary
+## 2. Project purpose
+## 3. Current objective
+## 4. Scope and ownership
+## 5. Architecture
+## 6. Runtime and containers
+## 7. Configuration
+## 8. Modules
+## 9. Data model ownership
+## 10. API surface
+## 11. Authentication and authorization
+## 12. Integrations
+## 13. Implemented behavior
+## 14. Validation evidence
+## 15. Database and migration impact
+## 16. Security considerations
+## 17. Accepted risks and constraints
+## 18. Completed work
+## 19. Pending work
+## 20. Required behavior
+## 21. Historical decisions
+## 22. Document boundary
+```
+
+## 10. Project `context/QA_CONTEXT.md`
+
+```text
+# QA_CONTEXT.md
+
+## 1. Project QA scope
+## 2. Required quality gates
+## 3. Test structure
+## 4. Unit tests
+## 5. Integration tests
+## 6. API tests
+## 7. Database tests
+## 8. Security tests
+## 9. Static analysis
+## 10. Coverage
+## 11. Test data and fixtures
+## 12. Environment requirements
+## 13. Current validated evidence
+## 14. Known defects
+## 15. Accepted exceptions
+## 16. Pending QA work
+## 17. Document boundary
+```
+"""
 
 
 def _contract_section_heading(archive_path: str) -> str:
-    if archive_path == GLOBAL_PROJECT:
-        return "## 2. Global `PROJECT_CONTEXT.md`"
+    mapping = {
+        GLOBAL_PROJECT: "## 2. Global `PROJECT_CONTEXT.md`",
+        SUITE_CONTEXT: "## 3. Global `SUITE_CONTEXT.md`",
+        BUSINESS_CONTEXT: "## 4. Global `BUSINESS_CONTEXT.md`",
+        GLOBAL_QA_CONTEXT: "## 5. Global `QA_CONTEXT.md`",
+        SECURITY_CONTEXT: "## 6. Global `SECURITY_CONTEXT.md`",
+        DATA_CONTEXT: "## 7. Global `DATA_CONTEXT.md`",
+        DECISIONS_CONTEXT: "## 8. Global `DECISIONS_CONTEXT.md`",
+        PROJECT_CONTEXT: "## 9. Project `context/PROJECT_CONTEXT.md`",
+        PROJECT_QA_CONTEXT: "## 10. Project `context/QA_CONTEXT.md`",
+    }
 
-    if archive_path == SUITE_CONTEXT:
-        return "## 3. Global `SUITE_CONTEXT.md`"
-
-    if archive_path == PROJECT_CONTEXT:
-        return "## 7. Project `context/PROJECT_CONTEXT.md`"
-
-    if archive_path in {GLOBAL_README, PROJECT_README}:
-        return "## 10. Project and suite `README.md`"
-
-    raise ValueError(f"No format contract for {archive_path}")
+    try:
+        return mapping[archive_path]
+    except KeyError as exc:
+        raise ValueError(
+            f"No format contract for {archive_path}"
+        ) from exc
 
 
 def _required_headings(archive_path: str) -> list[str]:
@@ -119,12 +347,18 @@ class UpgradeEnvironment:
         )
         self.targets = {
             GLOBAL_PROJECT: self.suite_root / "PROJECT_CONTEXT.md",
-            GLOBAL_README: self.suite_root / "README.md",
             SUITE_CONTEXT: self.suite_root / "SUITE_CONTEXT.md",
+            BUSINESS_CONTEXT: self.suite_root / "BUSINESS_CONTEXT.md",
+            GLOBAL_QA_CONTEXT: self.suite_root / "QA_CONTEXT.md",
+            SECURITY_CONTEXT: self.suite_root / "SECURITY_CONTEXT.md",
+            DATA_CONTEXT: self.suite_root / "DATA_CONTEXT.md",
+            DECISIONS_CONTEXT: self.suite_root / "DECISIONS_CONTEXT.md",
             PROJECT_CONTEXT: (
                 self.project_root / "context/PROJECT_CONTEXT.md"
             ),
-            PROJECT_README: self.project_root / "README.md",
+            PROJECT_QA_CONTEXT: (
+                self.project_root / "context/QA_CONTEXT.md"
+            ),
         }
 
         for archive_path, target in self.targets.items():
@@ -226,7 +460,7 @@ class ContextUpgradeTests(unittest.TestCase):
             backup = Path(response.backup_directory)
             self.assertEqual(
                 backup.name,
-                "20260730_101112_dp-api",
+                "20260730_101112_000000_dp-api",
             )
             self.assertEqual(
                 (
@@ -257,6 +491,45 @@ class ContextUpgradeTests(unittest.TestCase):
                 ),
                 [],
             )
+
+    def test_all_authorized_context_types_can_be_replaced(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            environment = UpgradeEnvironment(Path(temporary_directory))
+            context_paths = [
+                GLOBAL_PROJECT,
+                SUITE_CONTEXT,
+                BUSINESS_CONTEXT,
+                GLOBAL_QA_CONTEXT,
+                SECURITY_CONTEXT,
+                DATA_CONTEXT,
+                DECISIONS_CONTEXT,
+                PROJECT_CONTEXT,
+                PROJECT_QA_CONTEXT,
+            ]
+            files = {
+                archive_path: _valid_document(
+                    archive_path,
+                    f"updated:{archive_path}",
+                )
+                for archive_path in context_paths
+            }
+            _create_upgrade_zip(
+                environment.zip_path,
+                files,
+                context_paths,
+            )
+
+            response = environment.run()
+
+            self.assertEqual(response.updated_files, context_paths)
+            for archive_path in context_paths:
+                self.assertEqual(
+                    environment.targets[archive_path].read_text(
+                        encoding="utf-8"
+                    ),
+                    files[archive_path],
+                )
+
 
     def test_user_guided_zip_accepts_and_backs_up_user_prompt(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -447,7 +720,7 @@ class ContextUpgradeTests(unittest.TestCase):
             environment = UpgradeEnvironment(Path(temporary_directory))
 
             with ZipFile(environment.zip_path, "w") as archive:
-                archive.writestr(GLOBAL_README, "new readme")
+                archive.writestr(SUITE_CONTEXT, "new readme")
 
             with self.assertRaises(ContextValidationError):
                 environment.run()
@@ -455,7 +728,7 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_protected_file_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             environment = UpgradeEnvironment(Path(temporary_directory))
-            protected = "SBM-SUITE/context/QA_CONTEXT.md"
+            protected = "SBM-SUITE/context/FORMAT_CONTEXT.md"
             _create_upgrade_zip(
                 environment.zip_path,
                 {protected: "forbidden"},
@@ -470,12 +743,10 @@ class ContextUpgradeTests(unittest.TestCase):
             environment = UpgradeEnvironment(Path(temporary_directory))
             _create_upgrade_zip(
                 environment.zip_path,
-                {GLOBAL_README: _valid_document(GLOBAL_README, "new readme")},
-                [GLOBAL_README],
+                {GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new project")},
+                [GLOBAL_PROJECT],
                 manifest_updates={
-                    "content_hashes": {
-                        GLOBAL_README: "0" * 64,
-                    }
+                    "content_hashes": {GLOBAL_PROJECT: "0" * 64}
                 },
             )
 
@@ -487,7 +758,7 @@ class ContextUpgradeTests(unittest.TestCase):
             environment = UpgradeEnvironment(Path(temporary_directory))
             _create_upgrade_zip(
                 environment.zip_path,
-                {GLOBAL_README: _valid_document(GLOBAL_README, "new readme")},
+                {SUITE_CONTEXT: _valid_document(SUITE_CONTEXT, "new suite")},
                 [GLOBAL_PROJECT],
             )
 
@@ -506,10 +777,9 @@ class ContextUpgradeTests(unittest.TestCase):
                 manifest_updates={
                     "allowed_files": [
                         GLOBAL_PROJECT,
-                        GLOBAL_README,
                         SUITE_CONTEXT,
                         PROJECT_CONTEXT,
-                        PROJECT_README,
+                        PROJECT_QA_CONTEXT,
                         EXECUTIVE_README,
                         COMMIT_MESSAGE,
                         "manifest.json",
@@ -526,72 +796,18 @@ class ContextUpgradeTests(unittest.TestCase):
                 _valid_document(GLOBAL_PROJECT, "new project"),
             )
             self.assertEqual(
-                environment.targets[GLOBAL_README].read_text(
+                environment.targets[SUITE_CONTEXT].read_text(
                     encoding="utf-8"
                 ),
-                f"old:{GLOBAL_README}",
+                f"old:{SUITE_CONTEXT}",
             )
             backup = Path(response.backup_directory)
             self.assertFalse(
-                (backup / "previous" / GLOBAL_README).exists()
+                (backup / "previous" / SUITE_CONTEXT).exists()
             )
             self.assertFalse(
-                (backup / "applied" / GLOBAL_README).exists()
+                (backup / "applied" / SUITE_CONTEXT).exists()
             )
-
-    def test_output_filename_may_be_absent_for_compatibility(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_README: _valid_document(GLOBAL_README, "new readme")},
-                [GLOBAL_README],
-                manifest_updates={"output_filename": None},
-            )
-
-            manifest_path = environment.zip_path
-
-            with ZipFile(manifest_path, "r") as source:
-                members = {
-                    info.filename: source.read(info.filename)
-                    for info in source.infolist()
-                }
-
-            manifest = json.loads(
-                members["manifest.json"].decode("utf-8")
-            )
-            manifest.pop("output_filename")
-            members["manifest.json"] = json.dumps(manifest).encode(
-                "utf-8"
-            )
-
-            with ZipFile(manifest_path, "w") as target:
-                for name, content in members.items():
-                    target.writestr(name, content)
-
-            response = environment.run()
-
-            self.assertTrue(response.input_cleaned)
-
-    def test_incorrect_output_filename_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_README: _valid_document(GLOBAL_README, "new readme")},
-                [GLOBAL_README],
-                manifest_updates={
-                    "output_filename": "other.zip",
-                },
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "manifest.output_filename",
-            ):
-                environment.run()
-
-            self.assertTrue(environment.zip_path.exists())
 
     def test_chatgpt_manifest_with_partial_files_is_accepted(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -602,7 +818,7 @@ class ContextUpgradeTests(unittest.TestCase):
                 GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new project"),
                 SUITE_CONTEXT: _valid_document(SUITE_CONTEXT, "new suite"),
                 PROJECT_CONTEXT: _valid_document(PROJECT_CONTEXT, "new project context"),
-                PROJECT_README: _valid_document(PROJECT_README, "new project readme"),
+                PROJECT_QA_CONTEXT: _valid_document(PROJECT_QA_CONTEXT, "new project readme"),
             }
             _create_upgrade_zip(
                 environment.zip_path,
@@ -611,10 +827,9 @@ class ContextUpgradeTests(unittest.TestCase):
                 manifest_updates={
                     "allowed_files": [
                         GLOBAL_PROJECT,
-                        GLOBAL_README,
                         SUITE_CONTEXT,
                         PROJECT_CONTEXT,
-                        PROJECT_README,
+                        PROJECT_QA_CONTEXT,
                         "manifest.json",
                         EXECUTIVE_README,
                         COMMIT_MESSAGE,
@@ -637,13 +852,9 @@ class ContextUpgradeTests(unittest.TestCase):
             self.assertEqual(response.updated_files, list(files))
             self.assertTrue(response.input_cleaned)
 
-    def test_information_only_zip_creates_backup_without_replacements(self):
+    def test_information_only_zip_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             environment = UpgradeEnvironment(Path(temporary_directory))
-            original_contents = {
-                archive_path: target.read_text(encoding="utf-8")
-                for archive_path, target in environment.targets.items()
-            }
             _create_upgrade_zip(
                 environment.zip_path,
                 {
@@ -653,25 +864,13 @@ class ContextUpgradeTests(unittest.TestCase):
                 [EXECUTIVE_README, COMMIT_MESSAGE],
             )
 
-            response = environment.run()
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "at least one authorized context file",
+            ):
+                environment.run()
 
-            self.assertTrue(response.input_cleaned)
-            self.assertEqual(
-                {
-                    archive_path: target.read_text(encoding="utf-8")
-                    for archive_path, target in environment.targets.items()
-                },
-                original_contents,
-            )
-            backup = Path(response.backup_directory)
-            self.assertEqual(
-                list((backup / "previous").rglob("*")),
-                [],
-            )
-            self.assertEqual(
-                list((backup / "applied").rglob("*")),
-                [],
-            )
+            self.assertTrue(environment.zip_path.exists())
 
     def test_missing_required_heading_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -804,9 +1003,9 @@ class ContextUpgradeTests(unittest.TestCase):
                 environment.zip_path,
                 {
                     GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new project"),
-                    GLOBAL_README: _valid_document(GLOBAL_README, "new readme"),
+                    SUITE_CONTEXT: _valid_document(SUITE_CONTEXT, "new suite"),
                 },
-                [GLOBAL_PROJECT, GLOBAL_README],
+                [GLOBAL_PROJECT, SUITE_CONTEXT],
             )
             from app.services.contexts import (
                 context_upgrade_service,
@@ -819,7 +1018,7 @@ class ContextUpgradeTests(unittest.TestCase):
             def fail_second_replacement(source, target):
                 if (
                     target
-                    == environment.targets[GLOBAL_README].resolve()
+                    == environment.targets[SUITE_CONTEXT].resolve()
                     and "previous" not in source.parts
                 ):
                     raise OSError("simulated replacement failure")
@@ -843,10 +1042,10 @@ class ContextUpgradeTests(unittest.TestCase):
                 f"old:{GLOBAL_PROJECT}",
             )
             self.assertEqual(
-                environment.targets[GLOBAL_README].read_text(
+                environment.targets[SUITE_CONTEXT].read_text(
                     encoding="utf-8"
                 ),
-                f"old:{GLOBAL_README}",
+                f"old:{SUITE_CONTEXT}",
             )
             self.assertTrue(environment.zip_path.exists())
 

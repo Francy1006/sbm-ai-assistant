@@ -22,6 +22,7 @@ logger = logging.getLogger("uvicorn.error.context_export.zip")
 logger.setLevel(logging.INFO)
 
 FORMAT_CONTEXT_ARCHIVE_PATH = "FORMAT_CONTEXT.md"
+PROJECT_TREE_ARCHIVE_PATH = "project-tree.txt"
 
 
 def _render_retrieved_context(
@@ -36,7 +37,9 @@ def _render_retrieved_context(
     lines = ["# Retrieved Context", ""]
 
     if not grouped:
-        lines.extend(["No relevant context chunks were retrieved.", ""])
+        lines.extend(
+            ["No relevant context chunks were retrieved.", ""]
+        )
         return "\n".join(lines)
 
     for (source_path, archive_path), chunks in grouped.items():
@@ -67,7 +70,26 @@ def _render_retrieved_context(
 
 def _text_file(content: str, empty_message: str) -> str:
     normalized = content.strip()
-    return f"{normalized}\n" if normalized else f"{empty_message}\n"
+    return (
+        f"{normalized}\n"
+        if normalized
+        else f"{empty_message}\n"
+    )
+
+
+def _project_tree_manifest(project_tree: str) -> dict:
+    if not project_tree.strip():
+        return {
+            "included": False,
+            "archive_path": None,
+            "content_hash": None,
+        }
+
+    return {
+        "included": True,
+        "archive_path": PROJECT_TREE_ARCHIVE_PATH,
+        "content_hash": content_hash(project_tree),
+    }
 
 
 def create_context_package(
@@ -80,6 +102,7 @@ def create_context_package(
     git_diff: str,
     git_log: str,
     qa_results: str,
+    project_tree: str,
     top_k: int,
     full_context_files: list[FullContextFile],
     missing_full_context_files: list[str],
@@ -89,26 +112,31 @@ def create_context_package(
     format_context_files = [
         context_file
         for context_file in full_context_files
-        if context_file.archive_path == FORMAT_CONTEXT_ARCHIVE_PATH
+        if context_file.archive_path
+        == FORMAT_CONTEXT_ARCHIVE_PATH
     ]
 
     if len(format_context_files) != 1:
         raise ValueError(
-            "Exactly one FORMAT_CONTEXT.md full context file is required"
+            "Exactly one FORMAT_CONTEXT.md full context file "
+            "is required"
         )
 
     format_context_file = format_context_files[0]
     packaged_context_files = [
         context_file
         for context_file in full_context_files
-        if context_file.archive_path != FORMAT_CONTEXT_ARCHIVE_PATH
+        if context_file.archive_path
+        != FORMAT_CONTEXT_ARCHIVE_PATH
     ]
 
     logger.info(
-        "[CONTEXT_EXPORT] manifest creation start project=%s sources=%d",
+        "[CONTEXT_EXPORT] manifest creation start "
+        "project=%s sources=%d",
         project_name,
         len(retrieved_chunks),
     )
+
     retrieved_sources = [
         {
             "source_path": source_path,
@@ -116,15 +144,22 @@ def create_context_package(
         }
         for source_path, archive_path in sorted(
             {
-                (chunk.source_path, chunk.archive_path)
+                (
+                    chunk.source_path,
+                    chunk.archive_path,
+                )
                 for chunk in retrieved_chunks
             }
         )
     ]
     full_context_file_manifest = [
         {
-            "source_path": str(context_file.source_path),
-            "archive_path": context_file.archive_path,
+            "source_path": str(
+                context_file.source_path
+            ),
+            "archive_path": (
+                context_file.archive_path
+            ),
         }
         for context_file in full_context_files
     ]
@@ -134,30 +169,61 @@ def create_context_package(
         )
         for context_file in full_context_files
     }
+
+    normalized_project_tree = project_tree.strip()
+    packaged_project_tree = (
+        f"{normalized_project_tree}\n"
+        if normalized_project_tree
+        else ""
+    )
+    project_tree_manifest = _project_tree_manifest(
+        packaged_project_tree
+    )
+
+    if normalized_project_tree:
+        content_hashes[
+            PROJECT_TREE_ARCHIVE_PATH
+        ] = project_tree_manifest["content_hash"]
+
     manifest = {
         "project_name": project_name,
         "workflow": "context-deploy",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(
+            timezone.utc
+        ).isoformat(),
         "query": query,
         "collection_name": CONTEXT_COLLECTION_NAME,
         "chunk_count": len(retrieved_chunks),
-        "retrieved_chunk_count": len(retrieved_chunks),
+        "retrieved_chunk_count": len(
+            retrieved_chunks
+        ),
         "retrieved_sources": retrieved_sources,
-        "full_context_files": full_context_file_manifest,
+        "full_context_files": (
+            full_context_file_manifest
+        ),
         "format_context_file": {
-            "source_path": str(format_context_file.source_path),
-            "archive_path": FORMAT_CONTEXT_ARCHIVE_PATH,
+            "source_path": str(
+                format_context_file.source_path
+            ),
+            "archive_path": (
+                FORMAT_CONTEXT_ARCHIVE_PATH
+            ),
             "protected": True,
             "complete": True,
         },
-        "missing_full_context_files": missing_full_context_files,
+        "project_tree": project_tree_manifest,
+        "missing_full_context_files": (
+            missing_full_context_files
+        ),
         "content_hashes": content_hashes,
         "filters_applied": {
             "project_name": project_name,
             "workflow": "context-deploy",
             "is_active": True,
             "global_repository": "SBM-SUITE",
-            "project_repository": "not SBM-SUITE",
+            "project_repository": (
+                "not SBM-SUITE"
+            ),
         },
         "embedding_model": EMBEDDING_MODEL_NAME,
         "top_k": top_k,
@@ -167,29 +233,40 @@ def create_context_package(
         ensure_ascii=False,
         indent=2,
     )
+
     logger.info(
-        "[CONTEXT_EXPORT] manifest creation complete project=%s bytes=%d",
+        "[CONTEXT_EXPORT] manifest creation complete "
+        "project=%s bytes=%d project_tree=%s",
         project_name,
         len(manifest_json.encode("utf-8")),
+        "included"
+        if normalized_project_tree
+        else "missing",
     )
 
     temporary_path = None
 
     try:
         logger.info(
-            "[CONTEXT_EXPORT] zip creation start project=%s destination=%s",
+            "[CONTEXT_EXPORT] zip creation start "
+            "project=%s destination=%s",
             project_name,
             destination.name,
         )
+
         with tempfile.NamedTemporaryFile(
             dir=output_directory,
             prefix=".context-package-",
             suffix=".zip",
             delete=False,
         ) as temporary_file:
-            temporary_path = Path(temporary_file.name)
+            temporary_path = Path(
+                temporary_file.name
+            )
+
         logger.info(
-            "[CONTEXT_EXPORT] temporary zip allocation complete project=%s",
+            "[CONTEXT_EXPORT] temporary zip "
+            "allocation complete project=%s",
             project_name,
         )
 
@@ -204,7 +281,9 @@ def create_context_package(
             )
             archive.writestr(
                 "retrieved-context.md",
-                _render_retrieved_context(retrieved_chunks),
+                _render_retrieved_context(
+                    retrieved_chunks
+                ),
             )
             archive.writestr(
                 "change-summary.md",
@@ -217,14 +296,20 @@ def create_context_package(
                 "changed-files.txt",
                 _text_file(
                     "\n".join(changed_files),
-                    "No changed files were detected.",
+                    (
+                        "No changed files were "
+                        "detected."
+                    ),
                 ),
             )
             archive.writestr(
                 "git-diff.patch",
                 _text_file(
                     git_diff,
-                    "No Git diff was provided or detected.",
+                    (
+                        "No Git diff was provided "
+                        "or detected."
+                    ),
                 ),
             )
             archive.writestr(
@@ -238,38 +323,67 @@ def create_context_package(
                 "qa-results.md",
                 _text_file(
                     qa_results,
-                    "No QA results were provided.",
+                    (
+                        "No QA results were "
+                        "provided."
+                    ),
                 ),
             )
 
-            for context_file in packaged_context_files:
+            if packaged_project_tree:
+                archive.writestr(
+                    PROJECT_TREE_ARCHIVE_PATH,
+                    packaged_project_tree,
+                )
+
+            for context_file in (
+                packaged_context_files
+            ):
                 archive.writestr(
                     context_file.archive_path,
                     context_file.content,
                 )
-            archive.writestr("manifest.json", manifest_json)
+
+            archive.writestr(
+                "manifest.json",
+                manifest_json,
+            )
+
         logger.info(
-            "[CONTEXT_EXPORT] temporary zip close complete project=%s",
+            "[CONTEXT_EXPORT] temporary zip close "
+            "complete project=%s",
             project_name,
         )
         logger.info(
-            "[CONTEXT_EXPORT] zip creation complete project=%s",
+            "[CONTEXT_EXPORT] zip creation "
+            "complete project=%s",
+            project_name,
+        )
+        logger.info(
+            "[CONTEXT_EXPORT] atomic replace start "
+            "project=%s",
             project_name,
         )
 
-        logger.info(
-            "[CONTEXT_EXPORT] atomic replace start project=%s",
-            project_name,
+        os.replace(
+            temporary_path,
+            destination,
         )
-        os.replace(temporary_path, destination)
-        resolved_destination = destination.resolve(strict=True)
+        resolved_destination = (
+            destination.resolve(strict=True)
+        )
+
         logger.info(
-            "[CONTEXT_EXPORT] atomic replace complete project=%s "
-            "zip_bytes=%d",
+            "[CONTEXT_EXPORT] atomic replace "
+            "complete project=%s zip_bytes=%d",
             project_name,
             resolved_destination.stat().st_size,
         )
+
         return resolved_destination
     finally:
-        if temporary_path and temporary_path.exists():
+        if (
+            temporary_path
+            and temporary_path.exists()
+        ):
             temporary_path.unlink()

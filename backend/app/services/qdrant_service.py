@@ -17,6 +17,8 @@ from app.config.settings import (
 )
 
 COLLECTION_NAME = QDRANT_COLLECTION_NAME
+CONTEXT_COLLECTION_NAME = "sbm_contexts"
+DOCUMENTATION_COLLECTION_NAME = "sbm_documentation"
 DEFAULT_VECTOR_SIZE = 1024
 DEFAULT_DISTANCE = Distance.COSINE
 
@@ -61,6 +63,28 @@ def create_collection(
             f"Collection '{target_collection}' has incompatible vector "
             f"configuration: expected size={vector_size}, distance={distance}"
         )
+
+
+
+def ensure_context_collections(
+    vector_size: int = DEFAULT_VECTOR_SIZE,
+    distance: Distance = DEFAULT_DISTANCE,
+) -> None:
+    """
+    Ensure the independent context and documentation collections exist.
+
+    Existing collections are validated and are never recreated implicitly.
+    """
+    create_collection(
+        collection_name=CONTEXT_COLLECTION_NAME,
+        vector_size=vector_size,
+        distance=distance,
+    )
+    create_collection(
+        collection_name=DOCUMENTATION_COLLECTION_NAME,
+        vector_size=vector_size,
+        distance=distance,
+    )
 
 
 def save_embedding(

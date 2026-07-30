@@ -14,10 +14,10 @@ from qdrant_client.models import (
     PointStruct,
 )
 
-from app.services.contexts.models import ContextSource, MarkdownChunk
+from app.services.documentation.models import DocumentationSource, DocumentationChunk
 from app.services.embedding_service import create_embeddings
 from app.services.qdrant_service import (
-    CONTEXT_COLLECTION_NAME,
+    DOCUMENTATION_COLLECTION_NAME,
     DEFAULT_DISTANCE,
     DEFAULT_VECTOR_SIZE,
     collection_exists,
@@ -30,7 +30,7 @@ from app.services.qdrant_service import (
 
 
 POINT_NAMESPACE = uuid.UUID("3d4ef55a-5ab3-4f43-9c76-e79d900d3fc3")
-logger = logging.getLogger("uvicorn.error.context_export.index")
+logger = logging.getLogger("uvicorn.error.documentation_export.index")
 logger.setLevel(logging.INFO)
 
 
@@ -42,11 +42,11 @@ def _point_id(
     project_name: str,
     source_path: str,
     source_hash: str,
-    chunk: MarkdownChunk,
+    chunk: DocumentationChunk,
 ) -> str:
     identity = "|".join(
         (
-            "context-deploy",
+            "documentation-deploy",
             project_name,
             source_path,
             source_hash,
@@ -73,7 +73,7 @@ def _source_filter(
         ),
         FieldCondition(
             key="workflow",
-            match=MatchValue(value="context-deploy"),
+            match=MatchValue(value="documentation-deploy"),
         ),
     ]
 
@@ -91,7 +91,7 @@ def _source_filter(
 
 
 def _scroll_source_points(
-    source: ContextSource,
+    source: DocumentationSource,
     project_name: str,
     active_only: bool,
 ) -> list:
@@ -112,7 +112,7 @@ def _scroll_source_points(
                 source_path,
                 active_only=active_only,
             ),
-            collection_name=CONTEXT_COLLECTION_NAME,
+            collection_name=DOCUMENTATION_COLLECTION_NAME,
         )
 
         for point in points:
@@ -123,7 +123,7 @@ def _scroll_source_points(
 
 def _points_match_unchanged_content(
     points: list,
-    chunks: list[MarkdownChunk],
+    chunks: list[DocumentationChunk],
     source_hash: str,
 ) -> bool:
     if len(points) != len(chunks):
@@ -144,10 +144,10 @@ def _points_match_unchanged_content(
     return indexed_chunks == expected_chunks
 
 
-def index_context_source(
-    source: ContextSource,
+def index_documentation_source(
+    source: DocumentationSource,
     markdown: str,
-    chunks: list[MarkdownChunk],
+    chunks: list[DocumentationChunk],
     project_name: str,
     embed: Callable[[str], list[float]] | None = None,
     embed_many: Callable[
@@ -176,14 +176,14 @@ def index_context_source(
         for chunk in chunks
     ]
 
-    if collection_exists(CONTEXT_COLLECTION_NAME):
+    if collection_exists(DOCUMENTATION_COLLECTION_NAME):
         create_collection(
-            collection_name=CONTEXT_COLLECTION_NAME,
+            collection_name=DOCUMENTATION_COLLECTION_NAME,
             vector_size=DEFAULT_VECTOR_SIZE,
             distance=DEFAULT_DISTANCE,
         )
         logger.info(
-            "[CONTEXT_EXPORT] active chunk lookup start source=%s",
+            "[DOCUMENTATION_EXPORT] active chunk lookup start source=%s",
             source.source_path,
         )
         active_points = _scroll_source_points(
@@ -193,7 +193,7 @@ def index_context_source(
         )
         active_point_ids = {str(point.id) for point in active_points}
         logger.info(
-            "[CONTEXT_EXPORT] active chunk lookup complete "
+            "[DOCUMENTATION_EXPORT] active chunk lookup complete "
             "source=%s active_points=%d",
             source.source_path,
             len(active_points),
@@ -213,19 +213,19 @@ def index_context_source(
                     "project": project_name,
                     "project_name": project_name,
                     "repository": source.repository,
-                    "context_type": source.context_type,
+                    "documentation_type": source.documentation_type,
                     "source_path": str(source.source_path),
                     "archive_path": source.archive_path,
                     "updated_at": updated_at,
                     "version": source_hash[:12],
                     "is_active": True,
                     "content_hash": source_hash,
-                    "workflow": "context-deploy",
+                    "workflow": "documentation-deploy",
                 },
-                collection_name=CONTEXT_COLLECTION_NAME,
+                collection_name=DOCUMENTATION_COLLECTION_NAME,
             )
             logger.info(
-                "[CONTEXT_EXPORT] unchanged source skip complete "
+                "[DOCUMENTATION_EXPORT] unchanged source skip complete "
                 "source=%s chunks=%d",
                 source.source_path,
                 len(chunks),
@@ -234,7 +234,7 @@ def index_context_source(
 
     embedding_started_at = time.monotonic()
     logger.info(
-        "[CONTEXT_EXPORT] embedding start source=%s chunks=%d",
+        "[DOCUMENTATION_EXPORT] embedding start source=%s chunks=%d",
         source.source_path,
         len(chunks),
     )
@@ -245,7 +245,7 @@ def index_context_source(
         vectors = embed_many([chunk.content for chunk in chunks])
 
     logger.info(
-        "[CONTEXT_EXPORT] embedding complete source=%s vectors=%d "
+        "[DOCUMENTATION_EXPORT] embedding complete source=%s vectors=%d "
         "duration_seconds=%.3f",
         source.source_path,
         len(vectors),
@@ -264,7 +264,7 @@ def index_context_source(
         raise ValueError("Embedding service returned inconsistent dimensions")
 
     create_collection(
-        collection_name=CONTEXT_COLLECTION_NAME,
+        collection_name=DOCUMENTATION_COLLECTION_NAME,
         vector_size=vector_size,
         distance=DEFAULT_DISTANCE,
     )
@@ -278,7 +278,7 @@ def index_context_source(
                 "project": project_name,
                 "project_name": project_name,
                 "repository": source.repository,
-                "context_type": source.context_type,
+                "documentation_type": source.documentation_type,
                 "section": chunk.section,
                 "source_path": str(source.source_path),
                 "archive_path": source.archive_path,
@@ -286,7 +286,7 @@ def index_context_source(
                 "version": source_hash[:12],
                 "is_active": True,
                 "content_hash": source_hash,
-                "workflow": "context-deploy",
+                "workflow": "documentation-deploy",
                 "chunk_index": chunk.chunk_index,
             },
         )
@@ -294,23 +294,23 @@ def index_context_source(
     ]
 
     logger.info(
-        "[CONTEXT_EXPORT] qdrant upsert start source=%s points=%d",
+        "[DOCUMENTATION_EXPORT] qdrant upsert start source=%s points=%d",
         source.source_path,
         len(points),
     )
     save_embeddings(
         points=points,
-        collection_name=CONTEXT_COLLECTION_NAME,
+        collection_name=DOCUMENTATION_COLLECTION_NAME,
     )
     logger.info(
-        "[CONTEXT_EXPORT] qdrant upsert complete source=%s points=%d",
+        "[DOCUMENTATION_EXPORT] qdrant upsert complete source=%s points=%d",
         source.source_path,
         len(points),
     )
 
     current_ids = set(point_ids)
     logger.info(
-        "[CONTEXT_EXPORT] obsolete chunk lookup start source=%s",
+        "[DOCUMENTATION_EXPORT] obsolete chunk lookup start source=%s",
         source.source_path,
     )
     previous_points = _scroll_source_points(
@@ -319,7 +319,7 @@ def index_context_source(
         active_only=False,
     )
     logger.info(
-        "[CONTEXT_EXPORT] obsolete chunk lookup complete "
+        "[DOCUMENTATION_EXPORT] obsolete chunk lookup complete "
         "source=%s points=%d",
         source.source_path,
         len(previous_points),
@@ -331,17 +331,17 @@ def index_context_source(
         and point.payload.get("is_active", False)
     ]
     logger.info(
-        "[CONTEXT_EXPORT] obsolete chunk deactivation start "
+        "[DOCUMENTATION_EXPORT] obsolete chunk deactivation start "
         "source=%s points=%d",
         source.source_path,
         len(obsolete_ids),
     )
     deactivate_points(
         point_ids=obsolete_ids,
-        collection_name=CONTEXT_COLLECTION_NAME,
+        collection_name=DOCUMENTATION_COLLECTION_NAME,
     )
     logger.info(
-        "[CONTEXT_EXPORT] obsolete chunk deactivation complete "
+        "[DOCUMENTATION_EXPORT] obsolete chunk deactivation complete "
         "source=%s points=%d",
         source.source_path,
         len(obsolete_ids),
