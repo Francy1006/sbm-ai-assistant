@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -27,10 +28,19 @@ from app.services.contexts.file_discovery_service import (
 
 UPGRADE_ZIP_NAME = "context-upgrade.zip"
 UPGRADE_WORKFLOW = "context-upgrade"
+FORMAT_CONTEXT_FILENAME = "FORMAT_CONTEXT.md"
+FORMAT_CONTRACT_SECTIONS = {
+    "global_project_context": "## 2. Global `PROJECT_CONTEXT.md`",
+    "global_suite_context": "## 3. Global `SUITE_CONTEXT.md`",
+    "global_readme": "## 10. Project and suite `README.md`",
+    "project_project_context": "## 7. Project `context/PROJECT_CONTEXT.md`",
+    "project_readme": "## 10. Project and suite `README.md`",
+}
 INFORMATIONAL_FILES = frozenset(
     {
         "EXECUTIVE_README.md",
         "COMMIT_MESSAGE.md",
+        "USER_PROMPT.md",
         "manifest.json",
     }
 )
@@ -272,6 +282,36 @@ def validate_upgrade_manifest(
     )
     commit_metadata = manifest.get(commit_field)
     rag_metadata = manifest.get("rag")
+    execution_mode = manifest.get("execution_mode", "evidence")
+    user_prompt_file = manifest.get("user_prompt_file")
+
+    if execution_mode not in {"evidence", "user-guided"}:
+        raise ContextValidationError(
+            "manifest.execution_mode must be evidence or user-guided"
+        )
+
+    if execution_mode == "evidence":
+        if user_prompt_file is not None:
+            raise ContextValidationError(
+                "manifest.user_prompt_file must be null in evidence mode"
+            )
+
+        if "USER_PROMPT.md" in actual_files:
+            raise ContextValidationError(
+                "USER_PROMPT.md is not allowed in evidence mode"
+            )
+
+    if execution_mode == "user-guided":
+        if user_prompt_file != "USER_PROMPT.md":
+            raise ContextValidationError(
+                "manifest.user_prompt_file must be USER_PROMPT.md "
+                "in user-guided mode"
+            )
+
+        if "USER_PROMPT.md" not in actual_files:
+            raise ContextValidationError(
+                "USER_PROMPT.md is required in user-guided mode"
+            )
 
     if (
         "output_filename" in manifest
@@ -367,6 +407,189 @@ def validate_upgrade_manifest(
             )
 
     return project_name, updated_files, replaceable_paths
+
+
+
+def _read_utf8_file(path: Path, label: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ContextValidationError(
+            f"{label} must be a readable UTF-8 file"
+        ) from exc
+
+
+def _extract_contract_headings(
+    format_markdown: str,
+    section_heading: str,
+) -> list[str]:
+    section_start = format_markdown.find(section_heading)
+
+    if section_start < 0:
+        raise ContextValidationError(
+            f"FORMAT_CONTEXT.md is missing contract section: "
+            f"{section_heading}"
+        )
+
+    section_body_start = section_start + len(section_heading)
+    section_body = format_markdown[section_body_start:]
+
+    format_block = re.search(
+        r"```text\s*\n(?P<body>.*?)\n```",
+        section_body,
+        flags=re.DOTALL,
+    )
+
+    if format_block is None:
+        raise ContextValidationError(
+            f"FORMAT_CONTEXT.md contract section has no text block: "
+            f"{section_heading}"
+        )
+
+    headings = [
+        line.strip()
+        for line in format_block.group("body").splitlines()
+        if re.fullmatch(r"#{1,2}\s+.+", line.strip())
+    ]
+
+    if not headings:
+        raise ContextValidationError(
+            f"FORMAT_CONTEXT.md contract section has no headings: "
+            f"{section_heading}"
+        )
+
+    if len(headings) != len(set(headings)):
+        raise ContextValidationError(
+            f"FORMAT_CONTEXT.md contains duplicated required headings: "
+            f"{section_heading}"
+        )
+
+    return headings
+
+
+def _document_headings(markdown: str) -> list[str]:
+    headings = []
+
+    for line in markdown.splitlines():
+        normalized = line.strip()
+
+        if re.fullmatch(r"#{1,2}\s+.+", normalized):
+            headings.append(normalized)
+
+    return headings
+
+
+def _contract_key_for_archive_path(
+    archive_path: str,
+    project_name: str,
+) -> str | None:
+    if archive_path == "SBM-SUITE/PROJECT_CONTEXT.md":
+        return "global_project_context"
+
+    if archive_path == "SBM-SUITE/context/SUITE_CONTEXT.md":
+        return "global_suite_context"
+
+    if archive_path == "SBM-SUITE/README.md":
+        return "global_readme"
+
+    if (
+        archive_path
+        == f"SBM-SUITE/{project_name}/context/PROJECT_CONTEXT.md"
+    ):
+        return "project_project_context"
+
+    if archive_path == f"SBM-SUITE/{project_name}/README.md":
+        return "project_readme"
+
+    return None
+
+
+def validate_staged_context_formats(
+    staging_directory: Path,
+    updated_files: list[str],
+    project_name: str,
+    suite_root: Path,
+):
+    format_context_path = suite_root / FORMAT_CONTEXT_FILENAME
+
+    if format_context_path.is_symlink():
+        raise ContextValidationError(
+            "FORMAT_CONTEXT.md must not be a symlink"
+        )
+
+    if not format_context_path.is_file():
+        raise ContextValidationError(
+            f"Missing required format contract: {format_context_path}"
+        )
+
+    format_markdown = _read_utf8_file(
+        format_context_path,
+        "FORMAT_CONTEXT.md",
+    )
+    expected_by_key = {
+        contract_key: _extract_contract_headings(
+            format_markdown,
+            section_heading,
+        )
+        for contract_key, section_heading in FORMAT_CONTRACT_SECTIONS.items()
+    }
+
+    for archive_path in updated_files:
+        contract_key = _contract_key_for_archive_path(
+            archive_path,
+            project_name,
+        )
+
+        if contract_key is None:
+            continue
+
+        staged_path = staging_directory.joinpath(
+            *PurePosixPath(archive_path).parts
+        )
+        markdown = _read_utf8_file(
+            staged_path,
+            archive_path,
+        )
+        actual_headings = _document_headings(markdown)
+        expected_headings = expected_by_key[contract_key]
+
+        if len(actual_headings) != len(set(actual_headings)):
+            raise ContextValidationError(
+                f"Duplicated headings in {archive_path}"
+            )
+
+        if actual_headings != expected_headings:
+            missing = [
+                heading
+                for heading in expected_headings
+                if heading not in actual_headings
+            ]
+            unexpected = [
+                heading
+                for heading in actual_headings
+                if heading not in expected_headings
+            ]
+
+            details = []
+
+            if missing:
+                details.append(
+                    "missing: " + ", ".join(missing)
+                )
+
+            if unexpected:
+                details.append(
+                    "unexpected: " + ", ".join(unexpected)
+                )
+
+            if not missing and not unexpected:
+                details.append("required headings are out of order")
+
+            raise ContextValidationError(
+                f"Context format validation failed for {archive_path}: "
+                + "; ".join(details)
+            )
+
 
 
 def _validated_target(
@@ -639,6 +862,13 @@ def upgrade_contexts(
                 resolved_project_root,
             )
         )
+        validate_staged_context_formats(
+            staging_directory=staging_directory,
+            updated_files=updated_files,
+            project_name=project_name,
+            suite_root=suite_root,
+        )
+
         timestamp = now().strftime("%Y%m%d_%H%M%S")
         backup_directory, targets = create_upgrade_backup(
             staging_directory=staging_directory,

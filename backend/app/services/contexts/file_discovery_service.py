@@ -42,6 +42,12 @@ GLOBAL_CONTEXT_FILES = (
         "system_prompt",
         "context/SYS_PROMPT.md",
     ),
+    (
+        "context/FORMAT_CONTEXT.md",
+        "context/FORMAT_CONTEXT.md",
+        "format_context",
+        "context/FORMAT_CONTEXT.md",
+    ),
 )
 
 PROJECT_CONTEXT_FILES = (
@@ -68,6 +74,11 @@ FULL_CONTEXT_FILE_MAPPINGS = (
         "SBM-SUITE/context/SUITE_CONTEXT.md",
     ),
     (
+        "global",
+        "context/FORMAT_CONTEXT.md",
+        "FORMAT_CONTEXT.md",
+    ),
+    (
         "project",
         "context/PROJECT_CONTEXT.md",
         "SBM-SUITE/{project_name}/context/PROJECT_CONTEXT.md",
@@ -88,6 +99,7 @@ class ContextValidationError(ValueError):
 class ValidatedExportPaths:
     project_root: Path
     source_context_root: Path
+    format_context_path: Path
     output_directory: Path
 
 
@@ -95,7 +107,9 @@ def _reject_traversal(value: str, field_name: str) -> Path:
     path = Path(value).expanduser()
 
     if not path.is_absolute():
-        raise ContextValidationError(f"{field_name} must be an absolute path")
+        raise ContextValidationError(
+            f"{field_name} must be an absolute path"
+        )
 
     if ".." in path.parts:
         raise ContextValidationError(
@@ -105,7 +119,10 @@ def _reject_traversal(value: str, field_name: str) -> Path:
     return path
 
 
-def _resolve_existing_directory(value: str, field_name: str) -> Path:
+def _resolve_existing_directory(
+    value: str,
+    field_name: str,
+) -> Path:
     path = _reject_traversal(value, field_name)
 
     try:
@@ -116,7 +133,41 @@ def _resolve_existing_directory(value: str, field_name: str) -> Path:
         ) from exc
 
     if not resolved.is_dir():
-        raise ContextValidationError(f"{field_name} must be a directory")
+        raise ContextValidationError(
+            f"{field_name} must be a directory"
+        )
+
+    return resolved
+
+
+def _resolve_existing_file(
+    value: str,
+    field_name: str,
+    allowed_root: Path,
+) -> Path:
+    path = _reject_traversal(value, field_name)
+
+    if path.is_symlink():
+        raise ContextValidationError(
+            f"{field_name} must not be a symlink"
+        )
+
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise ContextValidationError(
+            f"{field_name} does not exist or cannot be resolved"
+        ) from exc
+
+    if not resolved.is_file():
+        raise ContextValidationError(
+            f"{field_name} must be a file"
+        )
+
+    if not resolved.is_relative_to(allowed_root):
+        raise ContextValidationError(
+            f"{field_name} must be inside source_context_root"
+        )
 
     return resolved
 
@@ -124,8 +175,13 @@ def _resolve_existing_directory(value: str, field_name: str) -> Path:
 def _validate_project_name(project_name: str) -> str:
     normalized = project_name.strip()
 
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", normalized):
-        raise ContextValidationError("project_name must be a single safe path segment")
+    if not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*",
+        normalized,
+    ):
+        raise ContextValidationError(
+            "project_name must be a single safe path segment"
+        )
 
     return normalized
 
@@ -145,13 +201,16 @@ def validate_export_paths(
     project_name: str,
     project_root: str,
     source_context_root: str,
+    format_context_path: str,
     output_directory: str,
 ) -> tuple[str, ValidatedExportPaths]:
     safe_project_name = _validate_project_name(project_name)
+
     source_root = _resolve_existing_directory(
         source_context_root,
         "source_context_root",
     )
+
     resolved_project_root = _resolve_existing_directory(
         project_root,
         "project_root",
@@ -165,7 +224,26 @@ def validate_export_paths(
             "project_root must be a child of source_context_root"
         )
 
-    output_path = _reject_traversal(output_directory, "output_directory")
+    resolved_format_context = _resolve_existing_file(
+        format_context_path,
+        "format_context_path",
+        source_root,
+    )
+
+    expected_format_context = (
+        source_root / "context" / "FORMAT_CONTEXT.md"
+    ).resolve()
+
+    if resolved_format_context != expected_format_context:
+        raise ContextValidationError(
+            "format_context_path must point to "
+            "/suite/context/FORMAT_CONTEXT.md"
+        )
+
+    output_path = _reject_traversal(
+        output_directory,
+        "output_directory",
+    )
 
     try:
         output_path.mkdir(parents=True, exist_ok=True)
@@ -176,11 +254,14 @@ def validate_export_paths(
         ) from exc
 
     if not resolved_output.is_dir():
-        raise ContextValidationError("output_directory must be a directory")
+        raise ContextValidationError(
+            "output_directory must be a directory"
+        )
 
     return safe_project_name, ValidatedExportPaths(
         project_root=resolved_project_root,
         source_context_root=source_root,
+        format_context_path=resolved_format_context,
         output_directory=resolved_output,
     )
 
@@ -195,7 +276,10 @@ def _add_source(
     repository: str,
     legacy_source_path: str,
 ):
-    if not source_path.is_absolute() or not source_path.is_relative_to(allowed_root):
+    if (
+        not source_path.is_absolute()
+        or not source_path.is_relative_to(allowed_root)
+    ):
         raise ContextValidationError(
             f"Context source path must be inside {allowed_root}"
         )
@@ -208,11 +292,14 @@ def _add_source(
 
         if current_path.is_symlink():
             raise ContextValidationError(
-                f"Symlinks are not allowed for context files: {archive_path}"
+                "Symlinks are not allowed for context files: "
+                f"{archive_path}"
             )
 
     if not source_path.is_file():
-        errors.append(f"Missing allowed context file: {archive_path}")
+        errors.append(
+            f"Missing allowed context file: {archive_path}"
+        )
         return
 
     sources.append(
@@ -242,13 +329,16 @@ def discover_context_sources(
         _add_source(
             sources=sources,
             errors=errors,
-            source_path=paths.source_context_root / source_relative_path,
+            source_path=(
+                paths.source_context_root
+                / source_relative_path
+            ),
             allowed_root=paths.source_context_root,
-            archive_path=f"SBM-SUITE/{archive_relative_path}",
+            archive_path=(
+                f"SBM-SUITE/{archive_relative_path}"
+            ),
             context_type=context_type,
             repository="SBM-SUITE",
-            # Keep the original identity path so an archive-path migration
-            # does not change deterministic IDs or require re-embedding.
             legacy_source_path=point_identity_path,
         )
 
@@ -262,14 +352,20 @@ def discover_context_sources(
             errors=errors,
             source_path=paths.project_root / relative_path,
             allowed_root=paths.source_context_root,
-            archive_path=f"SBM-SUITE/{project_name}/{relative_path}",
+            archive_path=(
+                f"SBM-SUITE/{project_name}/{relative_path}"
+            ),
             context_type=context_type,
             repository=paths.project_root.name,
-            legacy_source_path=f"{project_relative_root}/{relative_path}",
+            legacy_source_path=(
+                f"{project_relative_root}/{relative_path}"
+            ),
         )
 
     if not sources:
-        raise ContextValidationError("No allowed Markdown context files were found")
+        raise ContextValidationError(
+            "No allowed Markdown context files were found"
+        )
 
     return sources, errors
 
@@ -283,6 +379,7 @@ def resolve_full_context_sources(
         source.source_path: source
         for source in sources
     }
+
     full_context_sources = []
     missing_archive_paths = []
 
@@ -294,10 +391,13 @@ def resolve_full_context_sources(
             if scope == "global"
             else paths.project_root
         )
+
         source_path = root / relative_path
+
         archive_path = archive_template.format(
             project_name=project_name
         )
+
         validated_source = sources_by_path.get(source_path)
 
         if validated_source is None:

@@ -61,8 +61,7 @@ def _is_safe_changed_file(path: str) -> bool:
         return False
 
     return not any(
-        part == ".env" or part.startswith(".env.")
-        for part in candidate.parts
+        part == ".env" or part.startswith(".env.") for part in candidate.parts
     )
 
 
@@ -116,6 +115,7 @@ def export_contexts(
         project_name=request.project_name,
         project_root=request.project_root,
         source_context_root=request.source_context_root,
+        format_context_path=request.format_context_path,
         output_directory=request.output_directory,
     )
     logger.info(
@@ -124,8 +124,7 @@ def export_contexts(
     )
     sources, errors = discover_context_sources(project_name, paths)
     logger.info(
-        "[CONTEXT_EXPORT] file discovery complete project=%s "
-        "sources=%d errors=%d",
+        "[CONTEXT_EXPORT] file discovery complete project=%s " "sources=%d errors=%d",
         project_name,
         len(sources),
         len(errors),
@@ -172,12 +171,10 @@ def export_contexts(
             "Allowed Markdown context files contain no indexable content"
         )
 
-    full_context_sources, missing_full_context_files = (
-        resolve_full_context_sources(
-            sources=sources,
-            project_name=project_name,
-            paths=paths,
-        )
+    full_context_sources, missing_full_context_files = resolve_full_context_sources(
+        sources=sources,
+        project_name=project_name,
+        paths=paths,
     )
     full_context_files = [
         FullContextFile(
@@ -212,9 +209,7 @@ def export_contexts(
             "Context indexing failed for project=%s",
             project_name,
         )
-        raise ContextExportInfrastructureError(
-            "Context indexing failed"
-        ) from exc
+        raise ContextExportInfrastructureError("Context indexing failed") from exc
 
     try:
         requested_changed_files = (
@@ -223,9 +218,7 @@ def export_contexts(
             else _collect_changed_files(paths.project_root)
         )
         changed_files = [
-            path
-            for path in requested_changed_files
-            if _is_safe_changed_file(path)
+            path for path in requested_changed_files if _is_safe_changed_file(path)
         ]
         git_diff = (
             request.git_diff
@@ -243,8 +236,7 @@ def export_contexts(
             qa_results=qa_results,
         )
         logger.info(
-            "[CONTEXT_EXPORT] relevant context retrieval start "
-            "project=%s top_k=%d",
+            "[CONTEXT_EXPORT] relevant context retrieval start " "project=%s top_k=%d",
             project_name,
             CONTEXT_EXPORT_TOP_K,
         )
@@ -288,9 +280,7 @@ def export_contexts(
             "Context ZIP creation failed for project=%s",
             project_name,
         )
-        raise ContextExportInfrastructureError(
-            "Context ZIP creation failed"
-        ) from exc
+        raise ContextExportInfrastructureError("Context ZIP creation failed") from exc
 
     logger.info(
         "[CONTEXT_EXPORT] response construction start project=%s",

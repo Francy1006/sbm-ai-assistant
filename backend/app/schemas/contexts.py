@@ -10,6 +10,7 @@ class ContextExportRequest(BaseModel):
     workflow: Literal["context-deploy"]
     project_root: str = Field(min_length=1)
     source_context_root: str = Field(min_length=1)
+    format_context_path: str = Field(min_length=1)
     output_directory: str = Field(min_length=1)
     change_summary: Optional[str] = None
     changed_files: Optional[list[str]] = None

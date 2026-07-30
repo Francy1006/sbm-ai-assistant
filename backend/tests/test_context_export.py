@@ -39,6 +39,7 @@ GLOBAL_SOURCE_FILES = (
     ("context/BUSINESS_CONTEXT.md", "context/BUSINESS_CONTEXT.md"),
     ("context/QA_CONTEXT.md", "context/QA_CONTEXT.md"),
     ("context/SYS_PROMPT.md", "context/SYS_PROMPT.md"),
+    ("context/FORMAT_CONTEXT.md", "context/FORMAT_CONTEXT.md"),
 )
 
 PROJECT_FILES = (
@@ -95,6 +96,9 @@ class ContextExportEndpointTests(unittest.TestCase):
                 "workflow": "context-deploy",
                 "project_root": str(project_root),
                 "source_context_root": str(suite_root),
+                "format_context_path": str(
+                    suite_root / "context/FORMAT_CONTEXT.md"
+                ),
                 "output_directory": str(output_directory),
                 "change_summary": "Actualizar exportación RAG.",
                 "changed_files": ["backend/app/export.py"],
@@ -158,7 +162,7 @@ class ContextExportEndpointTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             self.assertEqual(payload["status"], "completed")
-            self.assertEqual(payload["indexed_source_count"], 10)
+            self.assertEqual(payload["indexed_source_count"], 11)
             self.assertEqual(payload["collection_name"], "sbm_contexts")
             self.assertEqual(payload["errors"], [])
             self.assertTrue(
@@ -200,6 +204,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                     "git-diff.patch",
                     "git-log.txt",
                     "qa-results.md",
+                    "FORMAT_CONTEXT.md",
                     "manifest.json",
                     "SBM-SUITE/PROJECT_CONTEXT.md",
                     "SBM-SUITE/README.md",
@@ -233,6 +238,8 @@ class ContextExportEndpointTests(unittest.TestCase):
 
                 manifest = json.loads(archive.read("manifest.json"))
                 self.assertEqual(manifest["project_name"], "dp-api")
+                self.assertEqual(manifest["execution_mode"], "evidence")
+                self.assertFalse(manifest["has_user_prompt"])
                 self.assertEqual(manifest["chunk_count"], 2)
                 self.assertEqual(
                     manifest["retrieved_chunk_count"],
@@ -290,6 +297,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                     },
                 )
                 expected_full_contexts = {
+                    "FORMAT_CONTEXT.md",
                     "SBM-SUITE/PROJECT_CONTEXT.md",
                     "SBM-SUITE/README.md",
                     "SBM-SUITE/context/SUITE_CONTEXT.md",
@@ -339,6 +347,73 @@ class ContextExportEndpointTests(unittest.TestCase):
                 )
                 self.assertIn("Score: 0.950000", retrieved_context)
 
+    def test_endpoint_exports_optional_user_prompt(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            suite_root = Path(temporary_directory) / "SBM-SUITE"
+            project_root = suite_root / "DP-API"
+            output_directory = suite_root / "context" / "output"
+            output_directory.mkdir(parents=True)
+
+            for source_path, archive_path in GLOBAL_SOURCE_FILES:
+                _write_markdown(suite_root / source_path, archive_path)
+
+            for relative_path in PROJECT_FILES:
+                _write_markdown(project_root / relative_path, relative_path)
+
+            request = ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                execution_mode="user-guided",
+                user_prompt="Planificar integración asincrónica.",
+                project_root=str(project_root),
+                source_context_root=str(suite_root),
+                format_context_path=str(
+                    suite_root / "context/FORMAT_CONTEXT.md"
+                ),
+                output_directory=str(output_directory),
+                change_summary="Sin cambios implementados.",
+                changed_files=[],
+                git_diff="",
+                qa_results="",
+            )
+
+            with (
+                patch(
+                    "app.services.contexts.context_export_service."
+                    "index_context_source",
+                    side_effect=lambda **kwargs: len(kwargs["chunks"]),
+                ),
+                patch(
+                    "app.services.contexts.context_export_service."
+                    "retrieve_relevant_context_chunks",
+                    return_value=[],
+                ),
+                patch(
+                    "app.services.contexts.context_export_service."
+                    "_collect_git_log",
+                    return_value="",
+                ),
+            ):
+                response = export_contexts(request)
+
+            with ZipFile(response.context_zip_path) as archive:
+                names = set(archive.namelist())
+                self.assertIn("USER_PROMPT.md", names)
+                self.assertEqual(
+                    archive.read("USER_PROMPT.md").decode("utf-8"),
+                    "Planificar integración asincrónica.\n",
+                )
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(
+                    manifest["execution_mode"],
+                    "user-guided",
+                )
+                self.assertTrue(manifest["has_user_prompt"])
+                self.assertIn(
+                    "Planificar integración asincrónica.",
+                    manifest["query"],
+                )
+
     def test_endpoint_rejects_wrong_workflow(self):
         app = FastAPI()
         app.include_router(router)
@@ -349,6 +424,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                 "workflow": "other",
                 "project_root": "/tmp/project",
                 "source_context_root": "/tmp",
+                "format_context_path": "/tmp/context/FORMAT_CONTEXT.md",
                 "output_directory": "/tmp/output",
             },
         )
@@ -370,6 +446,9 @@ class ContextPathValidationTests(unittest.TestCase):
                     project_name="dp-api",
                     project_root=str(project_root),
                     source_context_root=str(suite_root),
+                    format_context_path=str(
+                        suite_root / "context/FORMAT_CONTEXT.md"
+                    ),
                     output_directory=str(base / "output"),
                 )
 
@@ -385,6 +464,9 @@ class ContextPathValidationTests(unittest.TestCase):
                     project_name="../dp-api",
                     project_root=str(project_root),
                     source_context_root=str(suite_root),
+                    format_context_path=str(
+                        suite_root / "context/FORMAT_CONTEXT.md"
+                    ),
                     output_directory=str(base / "output"),
                 )
 
@@ -393,6 +475,9 @@ class ContextPathValidationTests(unittest.TestCase):
                     project_name="dp-api",
                     project_root=f"{project_root}/../project",
                     source_context_root=str(suite_root),
+                    format_context_path=str(
+                        suite_root / "context/FORMAT_CONTEXT.md"
+                    ),
                     output_directory=str(base / "output"),
                 )
 
@@ -947,6 +1032,10 @@ class ContextApplicationTests(unittest.TestCase):
             suite_root = Path(temporary_directory) / "SBM-SUITE"
             project_root = suite_root / "DP-API"
             _write_markdown(suite_root / "context/README.md", "Suite")
+            _write_markdown(
+                suite_root / "context/FORMAT_CONTEXT.md",
+                "Format",
+            )
             _write_markdown(project_root / "README.md", "Project")
 
             request = ContextExportRequest(
@@ -954,6 +1043,9 @@ class ContextApplicationTests(unittest.TestCase):
                 workflow="context-deploy",
                 project_root=str(project_root),
                 source_context_root=str(suite_root),
+                format_context_path=str(
+                    suite_root / "context/FORMAT_CONTEXT.md"
+                ),
                 output_directory=str(suite_root / "output"),
             )
 
@@ -973,8 +1065,8 @@ class ContextApplicationTests(unittest.TestCase):
             ):
                 response = export_contexts(request)
 
-            self.assertEqual(response.indexed_source_count, 2)
-            self.assertEqual(len(response.errors), 11)
+            self.assertEqual(response.indexed_source_count, 3)
+            self.assertEqual(len(response.errors), 10)
             self.assertIn(
                 "Missing authorized full context file: "
                 "SBM-SUITE/PROJECT_CONTEXT.md",

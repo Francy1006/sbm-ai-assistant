@@ -21,6 +21,8 @@ from app.services.contexts.models import (
 logger = logging.getLogger("uvicorn.error.context_export.zip")
 logger.setLevel(logging.INFO)
 
+FORMAT_CONTEXT_ARCHIVE_PATH = "FORMAT_CONTEXT.md"
+
 
 def _render_retrieved_context(
     retrieved_chunks: list[RetrievedContextChunk],
@@ -83,6 +85,25 @@ def create_context_package(
     missing_full_context_files: list[str],
 ) -> Path:
     destination = output_directory / "context-package.zip"
+
+    format_context_files = [
+        context_file
+        for context_file in full_context_files
+        if context_file.archive_path == FORMAT_CONTEXT_ARCHIVE_PATH
+    ]
+
+    if len(format_context_files) != 1:
+        raise ValueError(
+            "Exactly one FORMAT_CONTEXT.md full context file is required"
+        )
+
+    format_context_file = format_context_files[0]
+    packaged_context_files = [
+        context_file
+        for context_file in full_context_files
+        if context_file.archive_path != FORMAT_CONTEXT_ARCHIVE_PATH
+    ]
+
     logger.info(
         "[CONTEXT_EXPORT] manifest creation start project=%s sources=%d",
         project_name,
@@ -123,6 +144,12 @@ def create_context_package(
         "retrieved_chunk_count": len(retrieved_chunks),
         "retrieved_sources": retrieved_sources,
         "full_context_files": full_context_file_manifest,
+        "format_context_file": {
+            "source_path": str(format_context_file.source_path),
+            "archive_path": FORMAT_CONTEXT_ARCHIVE_PATH,
+            "protected": True,
+            "complete": True,
+        },
         "missing_full_context_files": missing_full_context_files,
         "content_hashes": content_hashes,
         "filters_applied": {
@@ -172,6 +199,10 @@ def create_context_package(
             compression=ZIP_DEFLATED,
         ) as archive:
             archive.writestr(
+                FORMAT_CONTEXT_ARCHIVE_PATH,
+                format_context_file.content,
+            )
+            archive.writestr(
                 "retrieved-context.md",
                 _render_retrieved_context(retrieved_chunks),
             )
@@ -210,7 +241,8 @@ def create_context_package(
                     "No QA results were provided.",
                 ),
             )
-            for context_file in full_context_files:
+
+            for context_file in packaged_context_files:
                 archive.writestr(
                     context_file.archive_path,
                     context_file.content,
