@@ -9,16 +9,13 @@ from app.services.contexts.file_discovery_service import (
 from app.services.documentation.models import DocumentationSource
 
 
-DOCUMENTATION_FILES = (
-    ("architecture.md", "architecture"),
-    ("business.md", "business"),
-    ("data-architecture.md", "data-architecture"),
-    ("security-devsecops.md", "security-devsecops"),
-    ("devops-deployment.md", "devops-deployment"),
-    ("qa-testing.md", "qa-testing"),
-    ("ai-engineering.md", "ai-engineering"),
-    ("roadmap.md", "roadmap"),
-)
+EXCLUDED_DIRECTORY_NAMES = {
+    "input",
+    "output",
+    "backups",
+    "__pycache__",
+}
+
 
 FORMAT_CONTEXT_FILENAME = "FORMAT_CONTEXT.md"
 SYSTEM_PROMPT_FILENAME = "SYS_PROMPT.md"
@@ -283,6 +280,25 @@ def _add_source(
     )
 
 
+def _is_excluded_documentation_path(
+    relative_path: Path,
+) -> bool:
+    return any(
+        part in EXCLUDED_DIRECTORY_NAMES
+        or part.startswith(".")
+        for part in relative_path.parts[:-1]
+    )
+
+
+def _documentation_type(
+    relative_path: Path,
+) -> str:
+    if len(relative_path.parts) > 1:
+        return relative_path.parts[0]
+
+    return relative_path.stem
+
+
 def discover_documentation_sources(
     project_name: str,
     paths: ValidatedDocumentationExportPaths,
@@ -292,58 +308,71 @@ def discover_documentation_sources(
 ]:
     del project_name
 
-    sources = []
-    errors = []
+    sources: List[DocumentationSource] = []
+    errors: List[str] = []
 
-    for filename, documentation_type in (
-        DOCUMENTATION_FILES
-    ):
+    documentation_files = sorted(
+        paths.documentation_root.rglob("*.md"),
+        key=lambda path: path.relative_to(
+            paths.documentation_root
+        ).as_posix().casefold(),
+    )
+
+    protected_paths = {
+        paths.format_context_path,
+        paths.system_prompt_path,
+    }
+
+    for source_path in documentation_files:
+        resolved_source = source_path.resolve()
+
+        if resolved_source in protected_paths:
+            continue
+
+        relative_path = resolved_source.relative_to(
+            paths.documentation_root
+        )
+
+        if _is_excluded_documentation_path(
+            relative_path
+        ):
+            continue
+
         _add_source(
             sources=sources,
             errors=errors,
-            source_path=(
-                paths.documentation_root
-                / filename
-            ),
-            allowed_root=(
-                paths.documentation_root
-            ),
+            source_path=resolved_source,
+            allowed_root=paths.documentation_root,
             archive_path=(
-                f"documentation/{filename}"
+                "documentation/"
+                f"{relative_path.as_posix()}"
             ),
             documentation_type=(
-                documentation_type
+                _documentation_type(relative_path)
             ),
         )
 
     _add_source(
         sources=sources,
         errors=errors,
-        source_path=(
-            paths.format_context_path
-        ),
-        allowed_root=(
-            paths.documentation_root
-        ),
+        source_path=paths.format_context_path,
+        allowed_root=paths.documentation_root,
         archive_path=FORMAT_CONTEXT_FILENAME,
         documentation_type="format-context",
     )
     _add_source(
         sources=sources,
         errors=errors,
-        source_path=(
-            paths.system_prompt_path
-        ),
-        allowed_root=(
-            paths.documentation_root
-        ),
+        source_path=paths.system_prompt_path,
+        allowed_root=paths.documentation_root,
         archive_path=SYSTEM_PROMPT_FILENAME,
         documentation_type="system-prompt",
     )
 
-    if not sources:
+    if len(sources) == 2:
         raise ContextValidationError(
-            "No authorized documentation files were found"
+            "No documentation page or subpage Markdown files "
+            "were found"
         )
 
     return sources, errors
