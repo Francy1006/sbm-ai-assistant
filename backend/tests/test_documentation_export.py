@@ -100,7 +100,7 @@ def _prepare_environment(
         Path(temporary_directory)
         / "SBM-SUITE"
     )
-    project_root = suite_root / "DP-API"
+    project_root = suite_root / "dp" / "DP-API"
     documentation_root = (
         suite_root
         / "context"
@@ -135,9 +135,12 @@ def _prepare_environment(
         format_context_path,
         "FORMAT_CONTEXT.md",
     )
-    _write_documentation(
-        system_prompt_path,
-        "SYS_PROMPT.md",
+    system_prompt_path.write_text(
+        (
+            "# SYS_PROMPT.md\n\n"
+            "Generate validated documentation for {{PROJECT_NAME}}.\n"
+        ),
+        encoding="utf-8",
     )
 
     project_root.mkdir(
@@ -569,6 +572,12 @@ class DocumentationExportServiceTests(
                 patch(
                     "app.services.documentation."
                     "documentation_export_service."
+                    "retrieve_relevant_context_chunks",
+                    return_value=[],
+                ),
+                patch(
+                    "app.services.documentation."
+                    "documentation_export_service."
                     "_collect_git_log",
                     return_value="",
                 ),
@@ -757,7 +766,7 @@ class DocumentationRetrievalTests(
             score=0.97,
             payload={
                 "source_path": (
-                    "/suite/DP-API/"
+                    "/suite/dp/DP-API/"
                     "documentation/api.md"
                 ),
                 "archive_path": (

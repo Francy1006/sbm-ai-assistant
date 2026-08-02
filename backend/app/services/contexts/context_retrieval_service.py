@@ -25,7 +25,7 @@ _CONTEXT_DOMAIN_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
             "project-tree.txt",
             "project_tree",
         ),
-        "Estado del proyecto, objetivos, arquitectura, estructura y trabajo pendiente",
+        "Estado del proyecto, objetivos, arquitectura, estructura global de la suite y trabajo pendiente",
     ),
     (
         (
@@ -97,7 +97,7 @@ _CONTEXT_DOMAIN_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
     ),
     (
         (
-            "documentation/",
+            "context/documentation/pages/",
             "documentation_context",
         ),
         "Relación entre contextos y documentación",
@@ -179,7 +179,7 @@ def build_context_query(
 
     if project_tree.strip():
         sections.append(
-            "Estructura actual del proyecto:\n"
+            "Estructura actual de SBM Suite:\n"
             f"{project_tree.strip()}"
         )
 

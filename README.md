@@ -323,3 +323,27 @@ Portfolio Summary
 
 SBM AI Assistant is a RAG-based backend system that keeps business documentation synchronized from Confluence into a vector database and allows users to query it through an AI assistant with grounded, source-aware answers.
 
+## Reusable components
+
+| File name | Path | Description |
+|---|---|---|
+| Project registry | `backend/app/services/project_registry.py` | Strict mapping from the three public project names to their brand-aware suite paths. |
+| Context routes | `backend/app/api/routes/contexts.py` | FastAPI endpoints for context deploy/export and context upgrade. |
+| Documentation routes | `backend/app/api/routes/documentation.py` | FastAPI endpoints for documentation deploy/export and documentation upgrade. |
+| Context schemas | `backend/app/schemas/contexts.py` | Validated request and response contracts for context workflows. |
+| Documentation schemas | `backend/app/schemas/documentation.py` | Validated request and response contracts for documentation workflows. |
+| Context discovery | `backend/app/services/contexts/file_discovery_service.py` | Global/project discovery, brand paths, traversal checks, and project allowlist enforcement. |
+| Context export | `backend/app/services/contexts/context_export_service.py` | Coordinates discovery, indexing, retrieval, project-tree evidence, and atomic ZIP creation. |
+| Context upgrade | `backend/app/services/contexts/context_upgrade_service.py` | Validates section patches and hashes, creates backups, applies atomic writes, and rolls back failures. |
+| Context index | `backend/app/services/contexts/context_index_service.py` | Indexes active chunks in `sbm_contexts` with brand, project, project path, and source metadata. |
+| Context retrieval | `backend/app/services/contexts/context_retrieval_service.py` | Retrieves active project and global context without exposing vectors. |
+| Context ZIP writer | `backend/app/services/contexts/zip_export_service.py` | Builds the context package through an atomic temporary-file replacement. |
+| Documentation discovery | `backend/app/services/documentation/file_discovery_service.py` | Validates documentation roots and discovers the authorized Markdown set. |
+| Documentation export | `backend/app/services/documentation/documentation_export_service.py` | Coordinates documentation indexing, retrieval, prompts, and package generation. |
+| Documentation upgrade | `backend/app/services/documentation/documentation_upgrade_service.py` | Validates and atomically installs documentation packages with rollback and backup manifests. |
+| Documentation index | `backend/app/services/documentation/documentation_index_service.py` | Maintains active documentation chunks in `sbm_documentation`. |
+| Markdown chunkers | `backend/app/services/contexts/markdown_chunk_service.py`, `backend/app/services/documentation/markdown_chunk_service.py` | Reusable heading-aware Markdown splitting for vector indexing. |
+| Service models | `backend/app/services/contexts/models.py`, `backend/app/services/documentation/models.py` | Typed internal source, chunk, and retrieval structures. |
+| Embeddings | `backend/app/services/embedding_service.py` | Shared embedding generation adapter. |
+| Qdrant | `backend/app/services/qdrant_service.py` | Shared collection, point, filtering, and lifecycle operations. |
+| Settings | `backend/app/config/settings.py` | Central non-secret runtime configuration and suite workflow roots. |

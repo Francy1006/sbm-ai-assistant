@@ -13,9 +13,14 @@ from zipfile import BadZipFile, ZipFile, ZipInfo
 
 from app.config.settings import (
     CONTEXT_UPGRADE_BACKUP_ROOT,
-    CONTEXT_UPGRADE_INPUT_DIRECTORY,
+    CONTEXT_UPGRADE_INPUT_ROOT,
     CONTEXT_UPGRADE_PROJECT_ROOT,
     CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT,
+)
+from app.services.project_registry import (
+    ProjectRegistryError,
+    get_project_location,
+    resolve_allowed_project_root,
 )
 from app.schemas.contexts import ContextUpgradeResponse
 from app.services.contexts.context_index_service import content_hash
@@ -90,36 +95,53 @@ PATCH_DEFINITIONS = {
         "## 8. Global `DECISIONS_CONTEXT.md`",
     ),
     "patches/global-readme.json": (
-        "SBM-SUITE/README.md",
-        "suite_parent",
+        "SBM-SUITE/context/README.md",
+        "suite",
         "README.md",
         "## 13. Project and suite `README.md`",
     ),
     "patches/project-context.json": (
-        "SBM-SUITE/{project_name}/context/PROJECT_CONTEXT.md",
+        "SBM-SUITE/{brand}/{project}/context/PROJECT_CONTEXT.md",
         "project",
         "context/PROJECT_CONTEXT.md",
         "## 10. Project `context/PROJECT_CONTEXT.md`",
     ),
     "patches/project-qa-context.json": (
-        "SBM-SUITE/{project_name}/context/QA_CONTEXT.md",
+        "SBM-SUITE/{brand}/{project}/context/QA_CONTEXT.md",
         "project",
         "context/QA_CONTEXT.md",
         "## 11. Project `context/QA_CONTEXT.md`",
     ),
     "patches/project-deploy-context.json": (
-        "SBM-SUITE/{project_name}/context/DEPLOY_CONTEXT.md",
+        "SBM-SUITE/{brand}/{project}/context/DEPLOY_CONTEXT.md",
         "project",
         "context/DEPLOY_CONTEXT.md",
         "## 12. Project `context/DEPLOY_CONTEXT.md`",
     ),
     "patches/project-readme.json": (
-        "SBM-SUITE/{project_name}/README.md",
+        "SBM-SUITE/{brand}/{project}/README.md",
         "project",
         "README.md",
         "## 13. Project and suite `README.md`",
     ),
 }
+
+PROJECT_SYNC_PATCHES = frozenset(
+    {
+        "patches/project-context.json",
+        "patches/project-readme.json",
+    }
+)
+REUSABLE_CHANGE_MARKERS = (
+    "/services/",
+    "/scripts/",
+    "/models/",
+    "/routers/",
+    "/schemas/",
+    "/utils/",
+    "model.py",
+    "models.py",
+)
 
 
 class ContextUpgradeOperationalError(RuntimeError):
@@ -259,6 +281,10 @@ def validate_upgrade_manifest(
     if not isinstance(project_name_value, str):
         raise ContextValidationError("manifest.project_name must be a string")
     project_name = validate_project_name(project_name_value)
+    try:
+        project_name = get_project_location(project_name).project_name
+    except ProjectRegistryError as exc:
+        raise ContextValidationError(str(exc)) from exc
     if project_name.casefold() != project_root.name.casefold():
         raise ContextValidationError(
             "manifest.project_name does not match configured project"
@@ -271,6 +297,7 @@ def validate_upgrade_manifest(
     allowed_files = _require_unique_string_list(manifest, "allowed_files")
     updated_files = _require_unique_string_list(manifest, "updated_files")
     content_hashes = manifest.get("content_hashes")
+    changed_files = manifest.get("changed_files", [])
     execution_mode = manifest.get("execution_mode", "evidence")
     user_prompt_file = manifest.get("user_prompt_file")
 
@@ -308,6 +335,24 @@ def validate_upgrade_manifest(
         raise ContextValidationError(
             "manifest.content_hashes must be a string map"
         )
+    if (
+        not isinstance(changed_files, list)
+        or any(not isinstance(path, str) or not path for path in changed_files)
+        or len(changed_files) != len(set(changed_files))
+    ):
+        raise ContextValidationError(
+            "manifest.changed_files must be a unique string list when provided"
+        )
+    for changed_file in changed_files:
+        changed_path = PurePosixPath(changed_file)
+        if (
+            changed_path.is_absolute()
+            or ".." in changed_path.parts
+            or "\\" in changed_file
+        ):
+            raise ContextValidationError(
+                "manifest.changed_files must contain safe project-relative paths"
+            )
 
     system_allowlist = set(PATCH_DEFINITIONS) | set(INFORMATIONAL_FILES)
     missing_required_files = REQUIRED_ROOT_FILES - actual_files
@@ -344,6 +389,20 @@ def validate_upgrade_manifest(
         )
 
     expected_updated_files = actual_files - {"manifest.json"}
+    normalized_changed_files = [
+        f"/{PurePosixPath(path).as_posix().casefold().strip('/')}"
+        for path in changed_files
+    ]
+    reusable_change = any(
+        path.endswith(".sh")
+        or any(marker in path for marker in REUSABLE_CHANGE_MARKERS)
+        for path in normalized_changed_files
+    )
+    if reusable_change and not PROJECT_SYNC_PATCHES.issubset(actual_files):
+        raise ContextValidationError(
+            "Reusable or structural changes require project-context.json "
+            "and project-readme.json patches"
+        )
     if not set(updated_files).issubset(declared_allowlist):
         raise ContextValidationError(
             "manifest.updated_files must be a subset of manifest.allowed_files"
@@ -662,17 +721,39 @@ def validate_and_build_replacements(
         target_template, scope, relative_path, contract_section = PATCH_DEFINITIONS[
             patch_path
         ]
-        expected_target = target_template.format(project_name=project_name)
+        brand = project_root.parent.name
+        project = project_root.name
+        expected_target = target_template.format(
+            project_name=project_name,
+            brand=brand,
+            project=project,
+        )
         target = _resolve_target(
             scope,
             relative_path,
             suite_context_root,
             project_root,
         )
-        allowed_headings = _extract_contract_headings(
-            format_markdown,
-            contract_section,
-        )
+        current_markdown = replacements.get(
+            expected_target,
+            (target, _read_utf8(target, expected_target)),
+        )[1]
+        if patch_path in {
+            "patches/global-readme.json",
+            "patches/project-readme.json",
+        }:
+            allowed_headings = _document_headings(current_markdown)
+            if patch_path == "patches/project-readme.json" and (
+                "## Reusable components" not in allowed_headings
+            ):
+                raise ContextValidationError(
+                    "Project README must contain ## Reusable components"
+                )
+        else:
+            allowed_headings = _extract_contract_headings(
+                format_markdown,
+                contract_section,
+            )
         try:
             payload = json.loads(
                 _read_utf8(
@@ -699,7 +780,6 @@ def validate_and_build_replacements(
                 )
             target_headings_seen.add(key)
 
-        current_markdown = replacements.get(expected_target, (target, _read_utf8(target, expected_target)))[1]
         patched_markdown = _apply_operations(current_markdown, operations)
         actual_headings = _document_headings(patched_markdown)
         if actual_headings != allowed_headings:
@@ -725,6 +805,8 @@ def create_upgrade_backup(
     backup_root: Path,
     project_name: str,
     timestamp: str,
+    generated_at: str,
+    motivo: str,
 ) -> Path:
     backup_directory = backup_root / f"{timestamp}_{project_name}"
     try:
@@ -748,17 +830,46 @@ def create_upgrade_backup(
                     backup_directory / PurePosixPath(patch_path),
                 )
 
+        backed_up_files = []
+        sha256_by_file = {}
         for archive_target in sorted(replacements):
             target, patched_content = replacements[archive_target]
+            previous_path = (
+                backup_directory / "previous" / PurePosixPath(archive_target)
+            )
             _copy_file(
                 target,
-                backup_directory / "previous" / PurePosixPath(archive_target),
+                previous_path,
+            )
+            original_hash = content_hash(_read_utf8(target, archive_target))
+            sha256_by_file[archive_target] = original_hash
+            backed_up_files.append(
+                {
+                    "original_path": archive_target,
+                    "backup_path": (
+                        PurePosixPath("previous")
+                        / PurePosixPath(archive_target)
+                    ).as_posix(),
+                    "sha256": original_hash,
+                }
             )
             applied_path = (
                 backup_directory / "applied" / PurePosixPath(archive_target)
             )
             applied_path.parent.mkdir(parents=True, exist_ok=True)
             applied_path.write_text(patched_content, encoding="utf-8")
+
+        backup_manifest = {
+            "project_name": project_name,
+            "workflow": UPGRADE_WORKFLOW,
+            "generated_at": generated_at,
+            "motivo": motivo,
+            "backed_up_files": backed_up_files,
+        }
+        (backup_directory / "BACKUP_MANIFEST.json").write_text(
+            json.dumps(backup_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     except (OSError, shutil.Error) as exc:
         raise ContextUpgradeOperationalError(
             "Unable to create context upgrade backup"
@@ -826,8 +937,8 @@ def apply_replacements(
     replaced_targets: list[str] = []
     try:
         for archive_target, (target, patched_content) in replacements.items():
-            _atomic_write_text(patched_content, target)
             replaced_targets.append(archive_target)
+            _atomic_write_text(patched_content, target)
     except Exception as exc:
         rollback_replacements(replaced_targets, replacements, backup_directory)
         raise ContextUpgradeOperationalError(
@@ -845,7 +956,7 @@ def cleanup_upgrade_input(zip_path: Path):
 
 
 def upgrade_contexts(
-    input_directory: str = CONTEXT_UPGRADE_INPUT_DIRECTORY,
+    input_directory: str = CONTEXT_UPGRADE_INPUT_ROOT,
     suite_context_root: str = CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT,
     project_root: str = CONTEXT_UPGRADE_PROJECT_ROOT,
     backup_root: str = CONTEXT_UPGRADE_BACKUP_ROOT,
@@ -859,10 +970,10 @@ def upgrade_contexts(
         suite_context_root,
         "context_upgrade_suite_context_root",
     )
-    resolved_project_root = resolve_existing_directory(
-        project_root,
-        "context_upgrade_project_root",
-    )
+    if input_path != (suite_root / "input").resolve():
+        raise ContextValidationError(
+            "context upgrade input must be suite_context_root/input"
+        )
     backup_path = Path(backup_root).expanduser()
     if not backup_path.is_absolute() or ".." in backup_path.parts:
         raise ContextValidationError(
@@ -875,6 +986,10 @@ def upgrade_contexts(
         raise ContextUpgradeOperationalError(
             "Unable to create context upgrade backup root"
         ) from exc
+    if backup_path != (suite_root / "backup").resolve():
+        raise ContextValidationError(
+            "context upgrade backup must be suite_context_root/backup"
+        )
 
     zip_path = locate_upgrade_zip(input_path)
     with tempfile.TemporaryDirectory(prefix="context-upgrade-") as temporary:
@@ -887,6 +1002,18 @@ def upgrade_contexts(
             zip_path,
             staging_directory,
         )
+        manifest_project_name = manifest.get("project_name")
+        if not isinstance(manifest_project_name, str):
+            raise ContextValidationError(
+                "manifest.project_name must be a string"
+            )
+        try:
+            _, resolved_project_root = resolve_allowed_project_root(
+                manifest_project_name,
+                Path(project_root),
+            )
+        except ProjectRegistryError as exc:
+            raise ContextValidationError(str(exc)) from exc
         project_name, updated_files = validate_upgrade_manifest(
             manifest,
             actual_files,
@@ -900,7 +1027,8 @@ def upgrade_contexts(
             suite_root,
             resolved_project_root,
         )
-        timestamp = now().strftime("%Y%m%d_%H%M%S_%f")
+        generated_at = now()
+        timestamp = generated_at.strftime("%Y%m%d_%H%M%S_%f")
         backup_directory = create_upgrade_backup(
             staging_directory,
             updated_files,
@@ -908,6 +1036,8 @@ def upgrade_contexts(
             backup_path,
             project_name,
             timestamp,
+            generated_at.isoformat(),
+            f"Apply validated context section patches for {project_name}",
         )
         apply_replacements(replacements, backup_directory)
         cleanup_upgrade_input(zip_path)

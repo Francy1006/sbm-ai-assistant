@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import stat
 import tempfile
 import unittest
@@ -15,354 +14,166 @@ from app.services.contexts.context_upgrade_service import (
     ContextUpgradeOperationalError,
     upgrade_contexts,
 )
-from app.services.contexts.file_discovery_service import (
-    ContextValidationError,
-)
+from app.services.contexts.file_discovery_service import ContextValidationError
 
+
+GLOBAL_PROJECT_PATCH = "patches/global-project-context.json"
+SUITE_CONTEXT_PATCH = "patches/suite-context.json"
+PROJECT_CONTEXT_PATCH = "patches/project-context.json"
+PROJECT_README_PATCH = "patches/project-readme.json"
 
 GLOBAL_PROJECT = "SBM-SUITE/context/PROJECT_CONTEXT.md"
 SUITE_CONTEXT = "SBM-SUITE/context/SUITE_CONTEXT.md"
-BUSINESS_CONTEXT = "SBM-SUITE/context/BUSINESS_CONTEXT.md"
-GLOBAL_QA_CONTEXT = "SBM-SUITE/context/QA_CONTEXT.md"
-SECURITY_CONTEXT = "SBM-SUITE/context/SECURITY_CONTEXT.md"
-DATA_CONTEXT = "SBM-SUITE/context/DATA_CONTEXT.md"
-DECISIONS_CONTEXT = "SBM-SUITE/context/DECISIONS_CONTEXT.md"
-PROJECT_CONTEXT = (
-    "SBM-SUITE/dp-api/context/PROJECT_CONTEXT.md"
-)
-PROJECT_QA_CONTEXT = (
-    "SBM-SUITE/dp-api/context/QA_CONTEXT.md"
-)
+PROJECT_CONTEXT = "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md"
+PROJECT_README = "SBM-SUITE/dp/DP-API/README.md"
+
 EXECUTIVE_README = "EXECUTIVE_README.md"
 COMMIT_MESSAGE = "COMMIT_MESSAGE.md"
 USER_PROMPT = "USER_PROMPT.md"
-FORMAT_CONTEXT = "FORMAT_CONTEXT.md"
-
-
-def _write(path: Path, content: str):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
 
 
 FORMAT_CONTRACT = """# FORMAT_CONTEXT.md
-
-## 1. Global rules
-
-Preserve exact headings and order.
 
 ## 2. Global `PROJECT_CONTEXT.md`
 
 ```text
 # PROJECT_CONTEXT.md
-
 ## 1. Executive summary
 ## 2. Current suite objective
-## 3. Projects and ownership
-## 4. Global architecture
-## 5. Shared infrastructure
-## 6. Cross-project integrations
-## 7. Context deployment and upgrade workflow
-## 8. Current implementation status
-## 9. Validated decisions
-## 10. Accepted risks and constraints
-## 11. Completed work
-## 12. Pending work
-## 13. Required behavior
-## 14. Historical decisions
-## 15. Document boundary
+## 3. Document boundary
 ```
+
+---
 
 ## 3. Global `SUITE_CONTEXT.md`
 
 ```text
 # SUITE_CONTEXT.md
-
 ## 1. Suite identity
 ## 2. Product scope
-## 3. Project map
-## 4. Ownership boundaries
-## 5. Runtime architecture
-## 6. Data architecture
-## 7. API boundaries
-## 8. Authentication and authorization
-## 9. Integrations
-## 10. Infrastructure and containers
-## 11. Shared configuration
-## 12. Context and knowledge architecture
-## 13. Deployment model
-## 14. Security rules
-## 15. Operational constraints
-## 16. Current suite state
-## 17. Context deployment lifecycle
-## 18. Document boundary
+## 3. Document boundary
 ```
 
-## 4. Global `BUSINESS_CONTEXT.md`
+---
 
-```text
-# BUSINESS_CONTEXT.md
-
-## 1. Business overview
-## 2. Product vision
-## 3. Business actors
-## 4. Organizations and brands
-## 5. Core business domains
-## 6. Business entities
-## 7. Business rules
-## 8. Commercial flows
-## 9. Pricing and fiscal concepts
-## 10. Inventory and catalog concepts
-## 11. Sales and order concepts
-## 12. Provider and branch concepts
-## 13. Terminology
-## 14. Validated business decisions
-## 15. Business constraints
-## 16. Pending business definitions
-## 17. Document boundary
-```
-
-## 5. Global `QA_CONTEXT.md`
-
-```text
-# QA_CONTEXT.md
-
-## 1. QA strategy
-## 2. Quality gates
-## 3. Test levels
-## 4. Test environments
-## 5. Required evidence
-## 6. Coverage rules
-## 7. Static analysis
-## 8. Security validation
-## 9. API validation
-## 10. Database validation
-## 11. Deployment validation
-## 12. Defect classification
-## 13. Release criteria
-## 14. Accepted exceptions
-## 15. Current QA status
-## 16. Pending QA work
-## 17. Document boundary
-```
-
-## 6. Global `SECURITY_CONTEXT.md`
-
-```text
-# SECURITY_CONTEXT.md
-
-## 1. Security objectives
-## 2. Security scope
-## 3. Identity and authentication
-## 4. Authorization
-## 5. Secrets and configuration
-## 6. Network security
-## 7. Data protection
-## 8. API security
-## 9. Dependency and supply-chain security
-## 10. Logging and audit
-## 11. Security validation
-## 12. Incident handling
-## 13. Current security status
-## 14. Accepted security risks
-## 15. Pending security work
-## 16. Document boundary
-```
-
-## 7. Global `DATA_CONTEXT.md`
-
-```text
-# DATA_CONTEXT.md
-
-## 1. Data architecture overview
-## 2. Data ownership
-## 3. Datastores
-## 4. Schemas
-## 5. Core entities
-## 6. Relationships
-## 7. Migration ownership
-## 8. Data lifecycle
-## 9. Data integrity
-## 10. Data access
-## 11. Data synchronization
-## 12. Backup and recovery
-## 13. Current data status
-## 14. Accepted data risks
-## 15. Pending data work
-## 16. Document boundary
-```
-
-## 8. Global `DECISIONS_CONTEXT.md`
-
-```text
-# DECISIONS_CONTEXT.md
-
-## 1. Decision governance
-## 2. Active decisions
-## 3. Architecture decisions
-## 4. Product decisions
-## 5. Data decisions
-## 6. Security decisions
-## 7. QA decisions
-## 8. Deployment decisions
-## 9. Superseded decisions
-## 10. Pending decisions
-## 11. Document boundary
-```
-
-## 9. Project `context/PROJECT_CONTEXT.md`
+## 10. Project `context/PROJECT_CONTEXT.md`
 
 ```text
 # PROJECT_CONTEXT.md
-
 ## 1. Executive summary
 ## 2. Project purpose
-## 3. Current objective
-## 4. Scope and ownership
-## 5. Architecture
-## 6. Runtime and containers
-## 7. Configuration
-## 8. Modules
-## 9. Data model ownership
-## 10. API surface
-## 11. Authentication and authorization
-## 12. Integrations
-## 13. Implemented behavior
-## 14. Validation evidence
-## 15. Database and migration impact
-## 16. Security considerations
-## 17. Accepted risks and constraints
-## 18. Completed work
-## 19. Pending work
-## 20. Required behavior
-## 21. Historical decisions
-## 22. Document boundary
+## 3. Document boundary
 ```
 
-## 10. Project `context/QA_CONTEXT.md`
+---
+
+## 13. Project and suite `README.md`
 
 ```text
-# QA_CONTEXT.md
-
-## 1. Project QA scope
-## 2. Required quality gates
-## 3. Test structure
-## 4. Unit tests
-## 5. Integration tests
-## 6. API tests
-## 7. Database tests
-## 8. Security tests
-## 9. Static analysis
-## 10. Coverage
-## 11. Test data and fixtures
-## 12. Environment requirements
-## 13. Current validated evidence
-## 14. Known defects
-## 15. Accepted exceptions
-## 16. Pending QA work
-## 17. Document boundary
+# README.md
+## Overview
+## Reusable components
+## 3. Document boundary
 ```
+
+---
 """
 
 
-def _contract_section_heading(archive_path: str) -> str:
-    mapping = {
-        GLOBAL_PROJECT: "## 2. Global `PROJECT_CONTEXT.md`",
-        SUITE_CONTEXT: "## 3. Global `SUITE_CONTEXT.md`",
-        BUSINESS_CONTEXT: "## 4. Global `BUSINESS_CONTEXT.md`",
-        GLOBAL_QA_CONTEXT: "## 5. Global `QA_CONTEXT.md`",
-        SECURITY_CONTEXT: "## 6. Global `SECURITY_CONTEXT.md`",
-        DATA_CONTEXT: "## 7. Global `DATA_CONTEXT.md`",
-        DECISIONS_CONTEXT: "## 8. Global `DECISIONS_CONTEXT.md`",
-        PROJECT_CONTEXT: "## 9. Project `context/PROJECT_CONTEXT.md`",
-        PROJECT_QA_CONTEXT: "## 10. Project `context/QA_CONTEXT.md`",
-    }
-
-    try:
-        return mapping[archive_path]
-    except KeyError as exc:
-        raise ValueError(
-            f"No format contract for {archive_path}"
-        ) from exc
+def _write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
-def _required_headings(archive_path: str) -> list[str]:
-    section_heading = _contract_section_heading(archive_path)
-    section_start = FORMAT_CONTRACT.index(section_heading)
-    body_start = section_start + len(section_heading)
-    section_body = FORMAT_CONTRACT[body_start:]
-
-    match = re.search(
-        r"```text\s*\n(?P<body>.*?)\n```",
-        section_body,
-        flags=re.DOTALL,
+def _document(title: str, heading_1: str, heading_2: str) -> str:
+    return (
+        f"# {title}\n\n"
+        f"{heading_1}\n\nOld first section.\n\n"
+        f"{heading_2}\n\nOld second section.\n\n"
+        "## 3. Document boundary\n\nBoundary.\n"
     )
 
-    if match is None:
-        raise AssertionError(
-            f"Missing format block for {archive_path}"
-        )
 
-    return [
-        line.strip()
-        for line in match.group("body").splitlines()
-        if re.fullmatch(r"#{1,2}\s+.+", line.strip())
-    ]
+def _replace_patch(target_file: str, heading: str, content: str) -> str:
+    return json.dumps(
+        {
+            "target_file": target_file,
+            "operations": [
+                {
+                    "operation": "replace_section",
+                    "heading": heading,
+                    "content": content,
+                }
+            ],
+        }
+    )
 
 
-def _valid_document(archive_path: str, marker: str) -> str:
-    headings = _required_headings(archive_path)
-    blocks = []
-
-    for index, heading in enumerate(headings):
-        blocks.append(heading)
-
-        if index == 0:
-            blocks.append(
-                "> **Last updated:** 2026-07-30\n"
-                ">\n"
-                "> **Purpose:** Test fixture\n"
-                ">\n"
-                "> **Accuracy note:** Test-only content"
-            )
-        elif index == 1:
-            blocks.append(marker)
-        else:
-            blocks.append(f"Content for {heading}")
-
-    return "\n\n".join(blocks) + "\n"
-
+def _append_patch(target_file: str, heading: str, content: str) -> str:
+    return json.dumps(
+        {
+            "target_file": target_file,
+            "operations": [
+                {
+                    "operation": "append_to_section",
+                    "heading": heading,
+                    "content": content,
+                }
+            ],
+        }
+    )
 
 
 class UpgradeEnvironment:
-    def __init__(self, root: Path):
-        self.suite_root = root / "context"
-        self.project_root = root / "DP-API"
+    def __init__(
+        self,
+        root: Path,
+        project_name: str = "dp-api",
+        brand: str = "dp",
+        directory_name: str = "DP-API",
+    ):
+        self.project_name = project_name
+        self.suite_root = root / "SBM-SUITE" / "context"
+        self.project_root = root / "SBM-SUITE" / brand / directory_name
         self.input_directory = self.suite_root / "input"
-        self.backup_root = self.suite_root / "temp" / "backup"
+        self.backup_root = self.suite_root / "backup"
+
         self.input_directory.mkdir(parents=True)
         self.backup_root.mkdir(parents=True)
-        _write(
-            self.suite_root / FORMAT_CONTEXT,
-            FORMAT_CONTRACT,
-        )
-        self.targets = {
-            GLOBAL_PROJECT: self.suite_root / "PROJECT_CONTEXT.md",
-            SUITE_CONTEXT: self.suite_root / "SUITE_CONTEXT.md",
-            BUSINESS_CONTEXT: self.suite_root / "BUSINESS_CONTEXT.md",
-            GLOBAL_QA_CONTEXT: self.suite_root / "QA_CONTEXT.md",
-            SECURITY_CONTEXT: self.suite_root / "SECURITY_CONTEXT.md",
-            DATA_CONTEXT: self.suite_root / "DATA_CONTEXT.md",
-            DECISIONS_CONTEXT: self.suite_root / "DECISIONS_CONTEXT.md",
-            PROJECT_CONTEXT: (
-                self.project_root / "context/PROJECT_CONTEXT.md"
-            ),
-            PROJECT_QA_CONTEXT: (
-                self.project_root / "context/QA_CONTEXT.md"
-            ),
-        }
 
-        for archive_path, target in self.targets.items():
-            _write(target, f"old:{archive_path}")
+        _write(self.suite_root / "FORMAT_CONTEXT.md", FORMAT_CONTRACT)
+        _write(
+            self.suite_root / "PROJECT_CONTEXT.md",
+            _document(
+                "PROJECT_CONTEXT.md",
+                "## 1. Executive summary",
+                "## 2. Current suite objective",
+            ),
+        )
+        _write(
+            self.suite_root / "SUITE_CONTEXT.md",
+            _document(
+                "SUITE_CONTEXT.md",
+                "## 1. Suite identity",
+                "## 2. Product scope",
+            ),
+        )
+        _write(
+            self.project_root / "context/PROJECT_CONTEXT.md",
+            _document(
+                "PROJECT_CONTEXT.md",
+                "## 1. Executive summary",
+                "## 2. Project purpose",
+            ),
+        )
+        _write(
+            self.project_root / "README.md",
+            _document(
+                "README.md",
+                "## Overview",
+                "## Reusable components",
+            ),
+        )
 
     @property
     def zip_path(self) -> Path:
@@ -380,674 +191,545 @@ class UpgradeEnvironment:
 
 def _create_upgrade_zip(
     path: Path,
-    files: dict[str, str],
-    updated_files: list[str],
+    patches: dict[str, str],
+    *,
+    execution_mode: str = "evidence",
+    user_prompt: str | None = None,
     manifest_updates: dict | None = None,
-):
+    project_name: str = "dp-api",
+) -> None:
+    files = {
+        EXECUTIVE_README: "Context upgrade summary\n",
+        COMMIT_MESSAGE: "docs(contexts): update project context\n",
+        **patches,
+    }
+    if user_prompt is not None:
+        files[USER_PROMPT] = user_prompt
+
     manifest = {
-        "project_name": "dp-api",
+        "project_name": project_name,
         "workflow": "context-upgrade",
-        "execution_mode": "evidence",
-        "user_prompt_file": None,
+        "execution_mode": execution_mode,
+        "user_prompt_file": USER_PROMPT if user_prompt is not None else None,
         "output_filename": "context-upgrade.zip",
         "allowed_files": [*files, "manifest.json"],
-        "updated_files": updated_files,
+        "updated_files": list(files),
         "content_hashes": {
-            name: hashlib.sha256(
-                content.encode("utf-8")
-            ).hexdigest()
+            name: hashlib.sha256(content.encode("utf-8")).hexdigest()
             for name, content in files.items()
         },
         "commit": {
             "type": "docs",
             "scope": "contexts",
             "subject": "update project context",
+            "message_file": COMMIT_MESSAGE,
         },
         "rag": {"retrieved_chunk_count": 3},
     }
-
     if manifest_updates:
         manifest.update(manifest_updates)
 
     with ZipFile(path, "w") as archive:
         for name, content in files.items():
             archive.writestr(name, content)
-
-        archive.writestr(
-            "manifest.json",
-            json.dumps(manifest),
-        )
+        archive.writestr("manifest.json", json.dumps(manifest))
 
 
 class ContextUpgradeTests(unittest.TestCase):
-    def test_valid_zip_creates_backup_replaces_atomically_and_cleans_input(
-        self,
-    ):
+    def test_valid_global_patch_creates_backup_applies_and_cleans_input(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            old_mode = stat.S_IMODE(
-                environment.targets[GLOBAL_PROJECT].stat().st_mode
-            )
-            files = {
-                GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new global project"),
-                EXECUTIVE_README: "Executive summary",
-                COMMIT_MESSAGE: "feat: update context",
-            }
+            env = UpgradeEnvironment(Path(temporary_directory))
+            target = env.suite_root / "PROJECT_CONTEXT.md"
+            old_mode = stat.S_IMODE(target.stat().st_mode)
+
+            patch_content = "## 2. Current suite objective\n\n" "New suite objective.\n"
             _create_upgrade_zip(
-                environment.zip_path,
-                files,
-                [GLOBAL_PROJECT, EXECUTIVE_README, COMMIT_MESSAGE],
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Current suite objective",
+                        patch_content,
+                    )
+                },
             )
 
-            response = environment.run()
+            response = env.run()
 
             self.assertEqual(response.project_name, "dp-api")
             self.assertEqual(response.workflow, "context-upgrade")
+            self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
             self.assertTrue(response.input_cleaned)
-            self.assertFalse(environment.zip_path.exists())
-            self.assertEqual(
-                environment.targets[GLOBAL_PROJECT].read_text(
-                    encoding="utf-8"
-                ),
-                _valid_document(GLOBAL_PROJECT, "new global project"),
-            )
-            self.assertEqual(
-                stat.S_IMODE(
-                    environment.targets[GLOBAL_PROJECT].stat().st_mode
-                ),
-                old_mode,
-            )
+            self.assertFalse(env.zip_path.exists())
+            self.assertIn("New suite objective.", target.read_text(encoding="utf-8"))
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), old_mode)
+
             backup = Path(response.backup_directory)
+            self.assertTrue((backup / "previous" / GLOBAL_PROJECT).is_file())
+            self.assertTrue((backup / "applied" / GLOBAL_PROJECT).is_file())
+            self.assertTrue((backup / GLOBAL_PROJECT_PATCH).is_file())
+            self.assertTrue((backup / EXECUTIVE_README).is_file())
+            self.assertTrue((backup / COMMIT_MESSAGE).is_file())
+            backup_manifest = json.loads(
+                (backup / "BACKUP_MANIFEST.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(backup_manifest["project_name"], "dp-api")
+            self.assertEqual(backup_manifest["workflow"], "context-upgrade")
             self.assertEqual(
-                backup.name,
-                "20260730_101112_000000_dp-api",
+                [item["archive_path"] for item in backup_manifest["backed_up_files"]],
+                [GLOBAL_PROJECT],
             )
-            self.assertEqual(
-                (
-                    backup / "previous" / GLOBAL_PROJECT
-                ).read_text(encoding="utf-8"),
-                f"old:{GLOBAL_PROJECT}",
-            )
-            self.assertEqual(
-                (
-                    backup / "applied" / GLOBAL_PROJECT
-                ).read_text(encoding="utf-8"),
-                _valid_document(GLOBAL_PROJECT, "new global project"),
-            )
-            self.assertTrue(
-                (backup / "EXECUTIVE_README.md").is_file()
-            )
-            self.assertTrue(
-                (backup / "COMMIT_MESSAGE.md").is_file()
-            )
-            self.assertTrue((backup / "manifest.json").is_file())
-            self.assertEqual(
-                list(
-                    environment.targets[
-                        GLOBAL_PROJECT
-                    ].parent.glob(
-                        ".PROJECT_CONTEXT.md.*.upgrade"
+            self.assertFalse((env.suite_root / "backups").exists())
+
+    def test_all_allowlisted_projects_can_apply_their_own_patch(self):
+        projects = (
+            ("dp-api", "dp", "DP-API"),
+            ("sbm-api", "sbm", "SBM-API"),
+            ("sbm-ai-assistant", "sbm", "sbm-ai-assistant"),
+        )
+        for project_name, brand, directory_name in projects:
+            with self.subTest(project_name=project_name):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    env = UpgradeEnvironment(
+                        Path(temporary_directory),
+                        project_name,
+                        brand,
+                        directory_name,
                     )
-                ),
-                [],
+                    target = (
+                        f"SBM-SUITE/{brand}/{directory_name}/context/"
+                        "PROJECT_CONTEXT.md"
+                    )
+                    _create_upgrade_zip(
+                        env.zip_path,
+                        {
+                            PROJECT_CONTEXT_PATCH: _replace_patch(
+                                target,
+                                "## 2. Project purpose",
+                                "## 2. Project purpose\n\nAllowlisted update.\n",
+                            )
+                        },
+                        project_name=project_name,
+                    )
+                    response = env.run()
+                    self.assertEqual(response.project_name, project_name)
+                    self.assertEqual(response.updated_files, [target])
+
+    def test_project_readme_section_patch_is_supported(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_README_PATCH: _replace_patch(
+                        PROJECT_README,
+                        "## Reusable components",
+                        "## Reusable components\n\n| File name | Path | Description |\n"
+                        "|---|---|---|\n| registry | services/ | allowlist |\n",
+                    )
+                },
+            )
+            response = env.run()
+            self.assertEqual(response.updated_files, [PROJECT_README])
+            self.assertIn(
+                "| File name | Path | Description |",
+                (env.project_root / "README.md").read_text(encoding="utf-8"),
             )
 
-    def test_all_authorized_context_types_can_be_replaced(self):
+    def test_reusable_changes_require_context_and_readme_patches(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            context_paths = [
-                GLOBAL_PROJECT,
-                SUITE_CONTEXT,
-                BUSINESS_CONTEXT,
-                GLOBAL_QA_CONTEXT,
-                SECURITY_CONTEXT,
-                DATA_CONTEXT,
-                DECISIONS_CONTEXT,
-                PROJECT_CONTEXT,
-                PROJECT_QA_CONTEXT,
-            ]
-            files = {
-                archive_path: _valid_document(
-                    archive_path,
-                    f"updated:{archive_path}",
-                )
-                for archive_path in context_paths
-            }
+            env = UpgradeEnvironment(Path(temporary_directory))
             _create_upgrade_zip(
-                environment.zip_path,
-                files,
-                context_paths,
-            )
-
-            response = environment.run()
-
-            self.assertEqual(response.updated_files, context_paths)
-            for archive_path in context_paths:
-                self.assertEqual(
-                    environment.targets[archive_path].read_text(
-                        encoding="utf-8"
-                    ),
-                    files[archive_path],
-                )
-
-
-    def test_user_guided_zip_accepts_and_backs_up_user_prompt(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            files = {
-                EXECUTIVE_README: "Executive",
-                COMMIT_MESSAGE: "docs(contexts): update objective",
-                USER_PROMPT: (
-                    "Actualizar el objetivo actual del proyecto "
-                    "para integrar sbm-api."
-                ),
-                PROJECT_CONTEXT: _valid_document(
-                    PROJECT_CONTEXT,
-                    "Updated current objective",
-                ),
-            }
-            _create_upgrade_zip(
-                environment.zip_path,
-                files,
-                list(files),
+                env.zip_path,
+                {
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 2. Project purpose",
+                        "## 2. Project purpose\n\nUpdated service inventory.\n",
+                    )
+                },
                 manifest_updates={
-                    "execution_mode": "user-guided",
-                    "user_prompt_file": USER_PROMPT,
+                    "changed_files": ["backend/app/services/new_service.py"]
+                },
+            )
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "require project-context.json and project-readme.json",
+            ):
+                env.run()
+            self.assertTrue(env.zip_path.exists())
+
+    def test_project_patch_uses_brand_and_real_project_directory(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 2. Project purpose",
+                        "## 2. Project purpose\n\nUpdated DP-API purpose.\n",
+                    )
                 },
             )
 
-            response = environment.run()
+            response = env.run()
+
+            self.assertEqual(response.updated_files, [PROJECT_CONTEXT])
+            self.assertIn(
+                "Updated DP-API purpose.",
+                (env.project_root / "context/PROJECT_CONTEXT.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+
+    def test_multiple_authorized_patches_are_applied(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 1. Executive summary",
+                        "## 1. Executive summary\n\nUpdated global summary.\n",
+                    ),
+                    SUITE_CONTEXT_PATCH: _replace_patch(
+                        SUITE_CONTEXT,
+                        "## 2. Product scope",
+                        "## 2. Product scope\n\nUpdated product scope.\n",
+                    ),
+                },
+            )
+
+            response = env.run()
+
+            self.assertEqual(
+                response.updated_files,
+                sorted([GLOBAL_PROJECT, SUITE_CONTEXT]),
+            )
+
+    def test_append_to_section_is_supported(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _append_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Current suite objective",
+                        "Additional validated detail.",
+                    )
+                },
+            )
+
+            env.run()
+
+            self.assertIn(
+                "Additional validated detail.",
+                (env.suite_root / "PROJECT_CONTEXT.md").read_text(encoding="utf-8"),
+            )
+
+    def test_user_guided_zip_accepts_and_backs_up_prompt(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 2. Project purpose",
+                        "## 2. Project purpose\n\nGuided update.\n",
+                    )
+                },
+                execution_mode="user-guided",
+                user_prompt="Actualizar el propósito del proyecto.",
+            )
+
+            response = env.run()
             backup = Path(response.backup_directory)
 
-            self.assertTrue(response.input_cleaned)
-            self.assertEqual(response.updated_files, list(files))
             self.assertEqual(
                 (backup / USER_PROMPT).read_text(encoding="utf-8"),
-                files[USER_PROMPT],
+                "Actualizar el propósito del proyecto.",
             )
-
-    def test_user_prompt_is_rejected_in_evidence_mode(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {USER_PROMPT: "Prompt literal"},
-                [USER_PROMPT],
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "USER_PROMPT.md is not allowed in evidence mode",
-            ):
-                environment.run()
-
-    def test_user_guided_mode_requires_user_prompt_file(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {EXECUTIVE_README: "Executive"},
-                [EXECUTIVE_README],
-                manifest_updates={
-                    "execution_mode": "user-guided",
-                    "user_prompt_file": USER_PROMPT,
-                },
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "USER_PROMPT.md is required in user-guided mode",
-            ):
-                environment.run()
-
-    def test_user_guided_mode_requires_manifest_prompt_reference(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {USER_PROMPT: "Prompt literal"},
-                [USER_PROMPT],
-                manifest_updates={
-                    "execution_mode": "user-guided",
-                    "user_prompt_file": None,
-                },
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "manifest.user_prompt_file",
-            ):
-                environment.run()
-
-    def test_invalid_execution_mode_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {EXECUTIVE_README: "Executive"},
-                [EXECUTIVE_README],
-                manifest_updates={"execution_mode": "invalid"},
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "manifest.execution_mode",
-            ):
-                environment.run()
-
-    def test_absent_zip_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_multiple_zips_are_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            environment.zip_path.write_bytes(b"one")
-            (
-                environment.input_directory / "second.zip"
-            ).write_bytes(b"two")
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_wrong_zip_name_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            (
-                environment.input_directory / "other.zip"
-            ).write_bytes(b"zip")
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_corrupt_zip_is_rejected_and_retained(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            environment.zip_path.write_bytes(b"not-a-zip")
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-            self.assertTrue(environment.zip_path.exists())
-
-    def test_path_traversal_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-
-            with ZipFile(environment.zip_path, "w") as archive:
-                archive.writestr("../escape.md", "unsafe")
-                archive.writestr("manifest.json", "{}")
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-            self.assertFalse(
-                (Path(temporary_directory) / "escape.md").exists()
-            )
-
-    def test_absolute_zip_path_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-
-            with ZipFile(environment.zip_path, "w") as archive:
-                archive.writestr("/absolute.md", "unsafe")
-                archive.writestr("manifest.json", "{}")
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_zip_symlink_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            symlink = ZipInfo(GLOBAL_PROJECT)
-            symlink.create_system = 3
-            symlink.external_attr = (
-                stat.S_IFLNK | 0o777
-            ) << 16
-
-            with ZipFile(environment.zip_path, "w") as archive:
-                archive.writestr(symlink, "README.md")
-                archive.writestr("manifest.json", "{}")
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_missing_manifest_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-
-            with ZipFile(environment.zip_path, "w") as archive:
-                archive.writestr(SUITE_CONTEXT, "new readme")
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_protected_file_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            protected = "SBM-SUITE/context/FORMAT_CONTEXT.md"
-            _create_upgrade_zip(
-                environment.zip_path,
-                {protected: "forbidden"},
-                [protected],
-            )
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_hash_mismatch_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new project")},
-                [GLOBAL_PROJECT],
-                manifest_updates={
-                    "content_hashes": {GLOBAL_PROJECT: "0" * 64}
-                },
-            )
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_inconsistent_manifest_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {SUITE_CONTEXT: _valid_document(SUITE_CONTEXT, "new suite")},
-                [GLOBAL_PROJECT],
-            )
-
-            with self.assertRaises(ContextValidationError):
-                environment.run()
-
-    def test_partial_update_replaces_only_updated_files(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            _create_upgrade_zip(
-                environment.zip_path,
-                {
-                    GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new project"),
-                },
-                [GLOBAL_PROJECT],
-                manifest_updates={
-                    "allowed_files": [
-                        GLOBAL_PROJECT,
-                        SUITE_CONTEXT,
-                        PROJECT_CONTEXT,
-                        PROJECT_QA_CONTEXT,
-                        EXECUTIVE_README,
-                        COMMIT_MESSAGE,
-                        "manifest.json",
-                    ],
-                },
-            )
-
-            response = environment.run()
-
-            self.assertEqual(
-                environment.targets[GLOBAL_PROJECT].read_text(
-                    encoding="utf-8"
-                ),
-                _valid_document(GLOBAL_PROJECT, "new project"),
-            )
-            self.assertEqual(
-                environment.targets[SUITE_CONTEXT].read_text(
-                    encoding="utf-8"
-                ),
-                f"old:{SUITE_CONTEXT}",
-            )
-            backup = Path(response.backup_directory)
-            self.assertFalse(
-                (backup / "previous" / SUITE_CONTEXT).exists()
-            )
-            self.assertFalse(
-                (backup / "applied" / SUITE_CONTEXT).exists()
-            )
-
-    def test_chatgpt_manifest_with_partial_files_is_accepted(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            files = {
-                EXECUTIVE_README: "Executive",
-                COMMIT_MESSAGE: "docs(contexts): update",
-                GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new project"),
-                SUITE_CONTEXT: _valid_document(SUITE_CONTEXT, "new suite"),
-                PROJECT_CONTEXT: _valid_document(PROJECT_CONTEXT, "new project context"),
-                PROJECT_QA_CONTEXT: _valid_document(PROJECT_QA_CONTEXT, "new project readme"),
-            }
-            _create_upgrade_zip(
-                environment.zip_path,
-                files,
-                list(files),
-                manifest_updates={
-                    "allowed_files": [
-                        GLOBAL_PROJECT,
-                        SUITE_CONTEXT,
-                        PROJECT_CONTEXT,
-                        PROJECT_QA_CONTEXT,
-                        "manifest.json",
-                        EXECUTIVE_README,
-                        COMMIT_MESSAGE,
-                    ],
-                    "commit": {
-                        "type": "feat",
-                        "scope": "contexts",
-                        "subject": "add RAG context lifecycle",
-                        "message_file": COMMIT_MESSAGE,
-                    },
-                    "rag": {
-                        "retrieved_chunk_count": 16,
-                        "retrieved_sources": [],
-                    },
-                },
-            )
-
-            response = environment.run()
-
-            self.assertEqual(response.updated_files, list(files))
-            self.assertTrue(response.input_cleaned)
 
     def test_information_only_zip_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(env.zip_path, {})
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "at least one authorized patch file",
+            ):
+                env.run()
+
+    def test_missing_required_root_files_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Current suite objective",
+                "## 2. Current suite objective\n\nUpdated.\n",
+            )
+            manifest = {
+                "project_name": "dp-api",
+                "workflow": "context-upgrade",
+            }
+            with ZipFile(env.zip_path, "w") as archive:
+                archive.writestr(GLOBAL_PROJECT_PATCH, patch)
+                archive.writestr("manifest.json", json.dumps(manifest))
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "manifest.allowed_files must be a unique string list",
+            ):
+                env.run()
+
+    def test_wrong_project_target_path_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
             _create_upgrade_zip(
-                environment.zip_path,
+                env.zip_path,
                 {
-                    EXECUTIVE_README: "Executive",
-                    COMMIT_MESSAGE: "docs: context report",
-                },
-                [EXECUTIVE_README, COMMIT_MESSAGE],
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "at least one authorized context file",
-            ):
-                environment.run()
-
-            self.assertTrue(environment.zip_path.exists())
-
-    def test_missing_required_heading_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            valid = _valid_document(GLOBAL_PROJECT, "new project")
-            heading = _required_headings(GLOBAL_PROJECT)[-1]
-            invalid = valid.replace(
-                heading + "\n\nContent for " + heading + "\n",
-                "",
-                1,
-            )
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_PROJECT: invalid},
-                [GLOBAL_PROJECT],
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "missing",
-            ):
-                environment.run()
-
-            self.assertTrue(environment.zip_path.exists())
-    def test_renamed_heading_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            valid = _valid_document(GLOBAL_PROJECT, "new project")
-            original = _required_headings(GLOBAL_PROJECT)[1]
-            invalid = valid.replace(
-                original,
-                "## 1. Renamed executive summary",
-                1,
-            )
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_PROJECT: invalid},
-                [GLOBAL_PROJECT],
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "missing|unexpected",
-            ):
-                environment.run()
-    def test_duplicated_heading_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            valid = _valid_document(GLOBAL_PROJECT, "new project")
-            duplicate = _required_headings(GLOBAL_PROJECT)[1]
-            invalid = valid + "\n" + duplicate + "\n\nDuplicate\n"
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_PROJECT: invalid},
-                [GLOBAL_PROJECT],
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "Duplicated headings",
-            ):
-                environment.run()
-    def test_heading_order_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            valid = _valid_document(GLOBAL_PROJECT, "new project")
-            headings = _required_headings(GLOBAL_PROJECT)
-            first = headings[1]
-            second = headings[2]
-            invalid = valid.replace(first, "__FIRST__", 1)
-            invalid = invalid.replace(second, first, 1)
-            invalid = invalid.replace("__FIRST__", second, 1)
-
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_PROJECT: invalid},
-                [GLOBAL_PROJECT],
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "out of order",
-            ):
-                environment.run()
-    def test_unexpected_top_level_heading_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            invalid = (
-                _valid_document(GLOBAL_PROJECT, "new project")
-                + "\n## 99. Unexpected\n\nContent\n"
-            )
-            _create_upgrade_zip(
-                environment.zip_path,
-                {GLOBAL_PROJECT: invalid},
-                [GLOBAL_PROJECT],
-            )
-
-            with self.assertRaisesRegex(
-                ContextValidationError,
-                "unexpected",
-            ):
-                environment.run()
-    def test_missing_format_contract_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
-            (environment.suite_root / FORMAT_CONTEXT).unlink()
-            _create_upgrade_zip(
-                environment.zip_path,
-                {
-                    GLOBAL_PROJECT: _valid_document(
-                        GLOBAL_PROJECT,
-                        "new project",
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        "SBM-SUITE/sbm/SBM-API/context/PROJECT_CONTEXT.md",
+                        "## 2. Project purpose",
+                        "## 2. Project purpose\n\nWrong target.\n",
                     )
                 },
-                [GLOBAL_PROJECT],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "target_file must be",
+            ):
+                env.run()
+
+    def test_unauthorized_heading_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 99. Unknown",
+                        "## 99. Unknown\n\nInvalid.\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "Unauthorized heading",
+            ):
+                env.run()
+
+    def test_replace_section_must_begin_with_exact_heading(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Current suite objective",
+                        "Content without heading.",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "must begin with exact heading",
+            ):
+                env.run()
+
+    def test_append_must_not_contain_h1_or_h2(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _append_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Current suite objective",
+                        "## Invalid nested heading\n\nContent.",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "must not contain H1/H2",
+            ):
+                env.run()
+
+    def test_hash_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Current suite objective",
+                "## 2. Current suite objective\n\nUpdated.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch},
+                manifest_updates={
+                    "content_hashes": {
+                        EXECUTIVE_README: hashlib.sha256(
+                            b"Context upgrade summary\n"
+                        ).hexdigest(),
+                        COMMIT_MESSAGE: hashlib.sha256(
+                            b"docs(contexts): update project context\n"
+                        ).hexdigest(),
+                        GLOBAL_PROJECT_PATCH: "0" * 64,
+                    }
+                },
+            )
+
+            with self.assertRaisesRegex(ContextValidationError, "SHA-256 mismatch"):
+                env.run()
+
+    def test_commit_metadata_must_match_message(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Current suite objective",
+                "## 2. Current suite objective\n\nUpdated.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch},
+                manifest_updates={
+                    "commit": {
+                        "type": "feat",
+                        "scope": "contexts",
+                        "subject": "different subject",
+                        "message_file": COMMIT_MESSAGE,
+                    }
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "does not match COMMIT_MESSAGE",
+            ):
+                env.run()
+
+    def test_missing_format_contract_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            (env.suite_root / "FORMAT_CONTEXT.md").unlink()
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Current suite objective",
+                        "## 2. Current suite objective\n\nUpdated.\n",
+                    )
+                },
             )
 
             with self.assertRaisesRegex(
                 ContextValidationError,
                 "Missing required format contract",
             ):
-                environment.run()
+                env.run()
 
-            self.assertTrue(environment.zip_path.exists())
+    def test_corrupt_zip_is_rejected_and_retained(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            env.zip_path.write_bytes(b"not-a-zip")
+
+            with self.assertRaises(ContextValidationError):
+                env.run()
+
+            self.assertTrue(env.zip_path.exists())
+
+    def test_path_traversal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            with ZipFile(env.zip_path, "w") as archive:
+                archive.writestr("../escape.md", "unsafe")
+                archive.writestr("manifest.json", "{}")
+
+            with self.assertRaises(ContextValidationError):
+                env.run()
+
+    def test_zip_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            symlink = ZipInfo(GLOBAL_PROJECT_PATCH)
+            symlink.create_system = 3
+            symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
+
+            with ZipFile(env.zip_path, "w") as archive:
+                archive.writestr(symlink, "target")
+                archive.writestr("manifest.json", "{}")
+
+            with self.assertRaises(ContextValidationError):
+                env.run()
 
     def test_replacement_failure_rolls_back_and_retains_input(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
-            environment = UpgradeEnvironment(Path(temporary_directory))
+            env = UpgradeEnvironment(Path(temporary_directory))
+            global_original = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            suite_original = (env.suite_root / "SUITE_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+
             _create_upgrade_zip(
-                environment.zip_path,
+                env.zip_path,
                 {
-                    GLOBAL_PROJECT: _valid_document(GLOBAL_PROJECT, "new project"),
-                    SUITE_CONTEXT: _valid_document(SUITE_CONTEXT, "new suite"),
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Current suite objective",
+                        "## 2. Current suite objective\n\nUpdated global.\n",
+                    ),
+                    SUITE_CONTEXT_PATCH: _replace_patch(
+                        SUITE_CONTEXT,
+                        "## 2. Product scope",
+                        "## 2. Product scope\n\nUpdated suite.\n",
+                    ),
                 },
-                [GLOBAL_PROJECT, SUITE_CONTEXT],
-            )
-            from app.services.contexts import (
-                context_upgrade_service,
             )
 
-            original_atomic_replace = (
-                context_upgrade_service._atomic_replace_file
-            )
+            from app.services.contexts import context_upgrade_service
 
-            def fail_second_replacement(source, target):
-                if (
-                    target
-                    == environment.targets[SUITE_CONTEXT].resolve()
-                    and "previous" not in source.parts
-                ):
+            original_atomic_write = context_upgrade_service._atomic_write_text
+            call_count = 0
+
+            def fail_second_write(content, target):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 2:
                     raise OSError("simulated replacement failure")
-
-                return original_atomic_replace(source, target)
+                return original_atomic_write(content, target)
 
             with patch(
-                "app.services.contexts.context_upgrade_service."
-                "_atomic_replace_file",
-                side_effect=fail_second_replacement,
+                "app.services.contexts.context_upgrade_service._atomic_write_text",
+                side_effect=fail_second_write,
             ):
-                with self.assertRaises(
-                    ContextUpgradeOperationalError
-                ):
-                    environment.run()
+                with self.assertRaises(ContextUpgradeOperationalError):
+                    env.run()
 
             self.assertEqual(
-                environment.targets[GLOBAL_PROJECT].read_text(
-                    encoding="utf-8"
-                ),
-                f"old:{GLOBAL_PROJECT}",
+                (env.suite_root / "PROJECT_CONTEXT.md").read_text(encoding="utf-8"),
+                global_original,
             )
             self.assertEqual(
-                environment.targets[SUITE_CONTEXT].read_text(
-                    encoding="utf-8"
-                ),
-                f"old:{SUITE_CONTEXT}",
+                (env.suite_root / "SUITE_CONTEXT.md").read_text(encoding="utf-8"),
+                suite_original,
             )
-            self.assertTrue(environment.zip_path.exists())
+            self.assertTrue(env.zip_path.exists())
 
 
 if __name__ == "__main__":

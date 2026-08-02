@@ -8,7 +8,7 @@
 >
 > **Accuracy note**
 >
-> The state described here was updated after direct inspection of the complete `SBM-SUITE/sbm-ai-assistant` repository supplied on 2026-07-29. The repository includes FastAPI routes, services, schemas, Docker configuration, Qdrant integration, Confluence synchronization, Cohere integration, Slack events, scheduler configuration, README, Git metadata, and local environment files. Secret values are intentionally excluded. Planned context-deployment functionality is explicitly marked as not yet implemented.
+> The state described here includes the implementation verified on 2026-08-02. The repository includes FastAPI routes, services, schemas, Docker configuration, Qdrant integration, Confluence synchronization, context/documentation deploy and upgrade workflows, tests, and non-secret environment templates. Older historical sections remain for decision traceability; section 24 is the authoritative current workflow state.
 
 ---
 
@@ -19,8 +19,11 @@ Ruta dentro de la suite:
 ```text
 SBM-SUITE/
 ├── context/
-├── DP-API/
-└── sbm-ai-assistant/
+├── dp/
+│   └── DP-API/
+└── sbm/
+    ├── SBM-API/
+    └── sbm-ai-assistant/
     ├── context/
     │   └── PROJECT_CONTEXT.md
     ├── backend/
@@ -54,7 +57,7 @@ Estado verificado del código:
 Implementar el flujo `context-deploy`:
 
 ```text
-DP-API/scripts/context-deploy.sh
+dp/DP-API/scripts/context-deploy.sh
 → SBM-AI-ASSISTANT
 → ingestión de contextos Markdown
 → embeddings
@@ -3208,3 +3211,53 @@ La aplicación existe principalmente para:
 - complementar el ERP interno desarrollado en Vue.js mostrando capacidad para trabajar con múltiples stacks frontend.
 
 No reemplaza el ERP ni forma parte del roadmap funcional del negocio; es una aplicación pública orientada al portafolio profesional.
+
+---
+
+## 24. Estado autoritativo de contextos y documentación (2026-08-02)
+
+### 24.1 Rutas por marca y allowlist
+
+La suite se monta en `/suite`. El contexto global vive en `/suite/context` y los únicos proyectos aceptados son:
+
+| Project name | Brand | Project path |
+|---|---|---|
+| `dp-api` | `dp` | `/suite/dp/DP-API` |
+| `sbm-api` | `sbm` | `/suite/sbm/SBM-API` |
+| `sbm-ai-assistant` | `sbm` | `/suite/sbm/sbm-ai-assistant` |
+
+`backend/app/services/project_registry.py` es la única fuente para esta resolución. Las solicitudes no pueden seleccionar otro proyecto, cruzar la ruta de otro proyecto ni usar traversal.
+
+### 24.2 Workflows implementados
+
+- `context-deploy`: descubre contexto global y del proyecto seleccionado, conserva paths con marca y `project-tree.txt`, indexa en `sbm_contexts` y genera `context-package.zip` de forma atómica.
+- `context-upgrade`: valida por completo el ZIP, manifest, SHA-256, contrato y JSON section patches antes de escribir; admite patches globales autorizados y del proyecto seleccionado.
+- `documentation-deploy`: descubre e indexa la documentación autorizada en `sbm_documentation` y mantiene su paquete de exportación.
+- `documentation-upgrade`: valida el paquete completo, crea backup y reemplaza documentos de forma atómica con rollback.
+
+Los routers están en `backend/app/api/routes/contexts.py` y `backend/app/api/routes/documentation.py`. Los servicios se separan bajo `backend/app/services/contexts/` y `backend/app/services/documentation/`.
+
+### 24.3 Backup único y atomicidad
+
+Los upgrades usan exclusivamente `/suite/context/backup/<timestamp>_<project>/`; no existe un directorio operativo `backups`. Cada ejecución guarda los originales, `EXECUTIVE_README.md`, `COMMIT_MESSAGE.md` y `BACKUP_MANIFEST.json`. El manifiesto registra proyecto, workflow, fecha, razón, rutas originales/de backup, hashes SHA-256 y la lista exacta respaldada.
+
+El orden obligatorio es validar y construir todos los documentos staged, crear el backup, efectuar reemplazos atómicos y borrar el ZIP solamente al finalizar. Si un reemplazo falla, se restauran todos los archivos ya modificados y se conserva el input.
+
+### 24.4 Qdrant y metadata
+
+- `sbm_contexts`: chunks de contexto global y por proyecto con `brand`, `project`, `project_name`, `project_path`, `source_path`, `archive_path`, `workflow`, `content_hash` e `is_active`; los vectores nunca se exportan.
+- `sbm_documentation`: chunks de documentación de suite con control de versión y actividad.
+
+### 24.5 Validación y tests
+
+Las suites `test_context_export.py`, `test_context_upgrade.py`, `test_documentation_export.py` y `test_documentation_upgrade.py` cubren allowlist, rutas con marca, traversal, cruces de proyecto, hashes, estructura Markdown, ZIPs corruptos, backup singular y su manifiesto, rollback, conservación/eliminación de input, patches de contexto/README y regresiones documentales. La validación final también incluye imports, `docker compose config` y búsquedas de rutas obsoletas.
+
+### 24.6 Componentes reutilizables
+
+El inventario mantenido en `README.md` incluye registro de proyectos, routers, schemas, servicios de descubrimiento/export/upgrade/indexación/recuperación, writers ZIP, chunkers Markdown, modelos internos, embeddings, Qdrant y settings. Cambios en servicios, scripts shell, modelos, estructura o componentes reutilizables deben acompañarse con patches de `context/PROJECT_CONTEXT.md` y `README.md`; cuando afecten a toda la suite deben incluir además los patches globales correspondientes.
+
+### 24.7 Pendientes
+
+- Mantener sincronizado `FORMAT_CONTEXT.md` cuando se incorporen nuevas secciones contractuales.
+- Ejecutar pruebas de integración contra Qdrant y servicios externos en un entorno con credenciales inyectadas fuera del repositorio.
+- Revisar periódicamente la allowlist cuando la suite agregue o retire proyectos; no aceptar rutas dinámicas como sustituto.

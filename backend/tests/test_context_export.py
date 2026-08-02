@@ -20,6 +20,7 @@ from app.services.contexts.context_retrieval_service import (
 )
 from app.services.contexts.file_discovery_service import (
     ContextValidationError,
+    discover_context_sources,
     validate_export_paths,
 )
 from app.services.contexts.markdown_chunk_service import (
@@ -59,7 +60,7 @@ class ContextExportEndpointTests(unittest.TestCase):
     def test_endpoint_exports_only_allowlisted_files_and_manifest(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             suite_root = Path(temporary_directory) / "SBM-SUITE"
-            project_root = suite_root / "DP-API"
+            project_root = suite_root / "dp" / "DP-API"
             output_directory = suite_root / "context" / "output"
             output_directory.mkdir(parents=True)
 
@@ -68,11 +69,11 @@ class ContextExportEndpointTests(unittest.TestCase):
                 mode="w",
             ) as stale_archive:
                 stale_archive.writestr(
-                    "SBM-SUITE/PROJECT_CONTEXT.md",
+                    "SBM-SUITE/context/PROJECT_CONTEXT.md",
                     "stale",
                 )
                 stale_archive.writestr(
-                    "SBM-SUITE/README.md",
+                    "SBM-SUITE/context/README.md",
                     "stale",
                 )
 
@@ -83,8 +84,8 @@ class ContextExportEndpointTests(unittest.TestCase):
                 _write_markdown(project_root / relative_path, relative_path)
 
             _write_markdown(project_root / "src/secret.py", "not exported")
-            (project_root / "project-tree.txt").write_text(
-                "DP-API/\n├── backend/\n└── context/\n",
+            (suite_root / "context" / "project-tree.txt").write_text(
+                "SBM-SUITE/\n├── context/\n└── dp/\n    └── DP-API/\n",
                 encoding="utf-8",
             )
             (project_root / ".env").write_text(
@@ -128,7 +129,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                         project_root / "context/PROJECT_CONTEXT.md"
                     ),
                     archive_path=(
-                        "SBM-SUITE/dp-api/context/"
+                        "SBM-SUITE/dp/DP-API/context/"
                         "PROJECT_CONTEXT.md"
                     ),
                     section="Deploy",
@@ -211,25 +212,25 @@ class ContextExportEndpointTests(unittest.TestCase):
                     "project-tree.txt",
                     "FORMAT_CONTEXT.md",
                     "manifest.json",
-                    "SBM-SUITE/PROJECT_CONTEXT.md",
-                    "SBM-SUITE/README.md",
+                    "SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    "SBM-SUITE/context/README.md",
                     "SBM-SUITE/context/SUITE_CONTEXT.md",
                     (
-                        "SBM-SUITE/dp-api/context/"
+                        "SBM-SUITE/dp/DP-API/context/"
                         "PROJECT_CONTEXT.md"
                     ),
-                    "SBM-SUITE/dp-api/README.md",
+                    "SBM-SUITE/dp/DP-API/README.md",
                 }
                 self.assertEqual(names, expected_names)
-                self.assertNotIn("SBM-SUITE/dp-api/.env", names)
-                self.assertNotIn("SBM-SUITE/dp-api/src/secret.py", names)
+                self.assertNotIn("SBM-SUITE/dp/DP-API/.env", names)
+                self.assertNotIn("SBM-SUITE/dp/DP-API/src/secret.py", names)
                 protected_full_contexts = {
                     "SBM-SUITE/context/BUSINESS_CONTEXT.md",
                     "SBM-SUITE/context/QA_CONTEXT.md",
                     "SBM-SUITE/context/SYS_PROMPT.md",
-                    "SBM-SUITE/dp-api/context/QA_CONTEXT.md",
+                    "SBM-SUITE/dp/DP-API/context/QA_CONTEXT.md",
                     (
-                        "SBM-SUITE/dp-api/context/"
+                        "SBM-SUITE/dp/DP-API/context/"
                         "DEPLOY_CONTEXT.md"
                     ),
                 }
@@ -237,7 +238,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                     protected_full_contexts.isdisjoint(names)
                 )
                 self.assertNotEqual(
-                    archive.read("SBM-SUITE/PROJECT_CONTEXT.md"),
+                    archive.read("SBM-SUITE/context/PROJECT_CONTEXT.md"),
                     b"stale",
                 )
 
@@ -260,22 +261,24 @@ class ContextExportEndpointTests(unittest.TestCase):
                     manifest["project_tree"],
                     {
                         "included": True,
+                        "source_path": "SBM-SUITE/context/project-tree.txt",
                         "archive_path": "project-tree.txt",
                         "content_hash": hashlib.sha256(
                             (
-                                "DP-API/\n"
-                                "├── backend/\n"
-                                "└── context/\n"
+                                "SBM-SUITE/\n"
+                                "├── context/\n"
+                                "└── dp/\n"
+                                "    └── DP-API/\n"
                             ).encode("utf-8")
                         ).hexdigest(),
                     },
                 )
                 self.assertEqual(
                     archive.read("project-tree.txt").decode("utf-8"),
-                    "DP-API/\n├── backend/\n└── context/\n",
+                    "SBM-SUITE/\n├── context/\n└── dp/\n    └── DP-API/\n",
                 )
                 self.assertIn(
-                    "Estructura actual del proyecto:",
+                    "Estructura actual de SBM Suite:",
                     manifest["query"],
                 )
                 self.assertIn(
@@ -316,21 +319,21 @@ class ContextExportEndpointTests(unittest.TestCase):
                     {
                         "SBM-SUITE/context/SUITE_CONTEXT.md",
                         (
-                            "SBM-SUITE/dp-api/context/"
+                            "SBM-SUITE/dp/DP-API/context/"
                             "PROJECT_CONTEXT.md"
                         ),
                     },
                 )
                 expected_full_contexts = {
                     "FORMAT_CONTEXT.md",
-                    "SBM-SUITE/PROJECT_CONTEXT.md",
-                    "SBM-SUITE/README.md",
+                    "SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    "SBM-SUITE/context/README.md",
                     "SBM-SUITE/context/SUITE_CONTEXT.md",
                     (
-                        "SBM-SUITE/dp-api/context/"
+                        "SBM-SUITE/dp/DP-API/context/"
                         "PROJECT_CONTEXT.md"
                     ),
-                    "SBM-SUITE/dp-api/README.md",
+                    "SBM-SUITE/dp/DP-API/README.md",
                 }
                 self.assertEqual(
                     {
@@ -393,7 +396,7 @@ class ContextExportEndpointTests(unittest.TestCase):
     def test_export_omits_project_tree_when_file_is_missing(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             suite_root = Path(temporary_directory) / "SBM-SUITE"
-            project_root = suite_root / "DP-API"
+            project_root = suite_root / "dp" / "DP-API"
             output_directory = suite_root / "context" / "output"
             output_directory.mkdir(parents=True)
 
@@ -443,6 +446,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                     manifest["project_tree"],
                     {
                         "included": False,
+                        "source_path": "SBM-SUITE/context/project-tree.txt",
                         "archive_path": None,
                         "content_hash": None,
                     },
@@ -455,7 +459,7 @@ class ContextExportEndpointTests(unittest.TestCase):
     def test_export_rejects_project_tree_symlink(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             suite_root = Path(temporary_directory) / "SBM-SUITE"
-            project_root = suite_root / "DP-API"
+            project_root = suite_root / "dp" / "DP-API"
             output_directory = suite_root / "context" / "output"
             output_directory.mkdir(parents=True)
 
@@ -466,8 +470,8 @@ class ContextExportEndpointTests(unittest.TestCase):
                 _write_markdown(project_root / relative_path, relative_path)
 
             real_tree = project_root / "real-tree.txt"
-            real_tree.write_text("DP-API/\n", encoding="utf-8")
-            (project_root / "project-tree.txt").symlink_to(real_tree)
+            real_tree.write_text("SBM-SUITE/\n", encoding="utf-8")
+            (suite_root / "context" / "project-tree.txt").symlink_to(real_tree)
 
             request = ContextExportRequest(
                 project_name="dp-api",
@@ -634,10 +638,10 @@ class ContextRetrievalTests(unittest.TestCase):
             score=0.97,
             payload={
                 "source_path": (
-                    "/suite/DP-API/context/PROJECT_CONTEXT.md"
+                    "/suite/dp/DP-API/context/PROJECT_CONTEXT.md"
                 ),
                 "archive_path": (
-                    "SBM-SUITE/dp-api/context/"
+                    "SBM-SUITE/dp/DP-API/context/"
                     "PROJECT_CONTEXT.md"
                 ),
                 "section": "API",
@@ -719,7 +723,7 @@ class ContextRetrievalTests(unittest.TestCase):
         self.assertEqual(chunks[0].score, 0.97)
         self.assertEqual(
             chunks[0].archive_path,
-            "SBM-SUITE/dp-api/context/PROJECT_CONTEXT.md",
+            "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md",
         )
         self.assertEqual(chunks[0].content, "Reglas del proyecto.")
 
@@ -732,10 +736,10 @@ class ContextIndexTests(unittest.TestCase):
             source_path.write_text(markdown, encoding="utf-8")
             source = ContextSource(
                 source_path=source_path,
-                archive_path="SBM-SUITE/dp-api/README.md",
+                archive_path="SBM-SUITE/dp/DP-API/README.md",
                 context_type="project_readme",
                 repository="DP-API",
-                legacy_source_path="DP-API/README.md",
+                legacy_source_path="dp/DP-API/README.md",
             )
             chunks = split_markdown_into_chunks(markdown, "README.md")
             embedded_batches = []
@@ -790,10 +794,10 @@ class ContextIndexTests(unittest.TestCase):
             source_path.write_text(markdown, encoding="utf-8")
             source = ContextSource(
                 source_path=source_path,
-                archive_path="SBM-SUITE/dp-api/README.md",
+                archive_path="SBM-SUITE/dp/DP-API/README.md",
                 context_type="project_readme",
                 repository="DP-API",
-                legacy_source_path="DP-API/README.md",
+                legacy_source_path="dp/DP-API/README.md",
             )
             chunks = split_markdown_into_chunks(markdown, "README.md")
             captured_points = []
@@ -901,7 +905,7 @@ class ContextIndexTests(unittest.TestCase):
             old_point = SimpleNamespace(
                 id="old-deterministic-id",
                 payload={
-                    "archive_path": "SBM-SUITE/README.md",
+                    "archive_path": "SBM-SUITE/context/README.md",
                     "source_path": str(source_path),
                     "content_hash": source_hash,
                     "chunk_index": chunks[0].chunk_index,
@@ -961,10 +965,10 @@ class ContextIndexTests(unittest.TestCase):
             source_path.write_text("# Section\nText", encoding="utf-8")
             source = ContextSource(
                 source_path=source_path,
-                archive_path="SBM-SUITE/dp-api/README.md",
+                archive_path="SBM-SUITE/dp/DP-API/README.md",
                 context_type="project_readme",
                 repository="DP-API",
-                legacy_source_path="DP-API/README.md",
+                legacy_source_path="dp/DP-API/README.md",
             )
             markdown = source_path.read_text(encoding="utf-8")
             chunks = split_markdown_into_chunks(markdown, "README.md")
@@ -1024,9 +1028,13 @@ class ContextIndexTests(unittest.TestCase):
                     "is_active",
                     "content_hash",
                     "workflow",
+                    "brand",
+                    "project_path",
                 }
                 self.assertTrue(required_metadata.issubset(payload))
                 self.assertEqual(payload["workflow"], "context-deploy")
+                self.assertEqual(payload["brand"], "dp")
+                self.assertEqual(payload["project_path"], "dp/DP-API")
                 self.assertTrue(payload["is_active"])
                 self.assertEqual(
                     payload["source_path"],
@@ -1098,7 +1106,7 @@ class ContextApplicationTests(unittest.TestCase):
     def test_missing_allowlisted_files_are_reported_without_exporting_others(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             suite_root = Path(temporary_directory) / "SBM-SUITE"
-            project_root = suite_root / "DP-API"
+            project_root = suite_root / "dp" / "DP-API"
             _write_markdown(suite_root / "context/README.md", "Suite")
             _write_markdown(
                 suite_root / "context/FORMAT_CONTEXT.md",
@@ -1137,16 +1145,16 @@ class ContextApplicationTests(unittest.TestCase):
             self.assertEqual(len(response.errors), 11)
             self.assertIn(
                 "Missing authorized full context file: "
-                "SBM-SUITE/PROJECT_CONTEXT.md",
+                "SBM-SUITE/context/PROJECT_CONTEXT.md",
                 response.errors,
             )
 
             with ZipFile(response.context_zip_path) as archive:
                 names = set(archive.namelist())
-                self.assertIn("SBM-SUITE/README.md", names)
-                self.assertIn("SBM-SUITE/dp-api/README.md", names)
+                self.assertIn("SBM-SUITE/context/README.md", names)
+                self.assertIn("SBM-SUITE/dp/DP-API/README.md", names)
                 self.assertNotIn(
-                    "SBM-SUITE/PROJECT_CONTEXT.md",
+                    "SBM-SUITE/context/PROJECT_CONTEXT.md",
                     names,
                 )
                 self.assertNotIn(
@@ -1159,13 +1167,69 @@ class ContextApplicationTests(unittest.TestCase):
                 self.assertEqual(
                     set(manifest["missing_full_context_files"]),
                     {
-                        "SBM-SUITE/PROJECT_CONTEXT.md",
+                        "SBM-SUITE/context/PROJECT_CONTEXT.md",
                         "SBM-SUITE/context/SUITE_CONTEXT.md",
                         (
-                            "SBM-SUITE/dp-api/context/"
+                            "SBM-SUITE/dp/DP-API/context/"
                             "PROJECT_CONTEXT.md"
                         ),
                     },
+                )
+
+
+class ProjectAllowlistTests(unittest.TestCase):
+    def test_all_three_projects_resolve_with_brand_paths(self):
+        projects = (
+            ("dp-api", "dp", "DP-API"),
+            ("sbm-api", "sbm", "SBM-API"),
+            ("sbm-ai-assistant", "sbm", "sbm-ai-assistant"),
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            suite_root = Path(temporary_directory) / "suite"
+            context_root = suite_root / "context"
+            output_root = context_root / "output"
+            output_root.mkdir(parents=True)
+            for source_path, _ in GLOBAL_SOURCE_FILES:
+                _write_markdown(suite_root / source_path, source_path)
+
+            for project_name, brand, directory_name in projects:
+                project_root = suite_root / brand / directory_name
+                for relative_path in PROJECT_FILES:
+                    _write_markdown(project_root / relative_path, relative_path)
+
+                safe_name, paths = validate_export_paths(
+                    project_name=project_name,
+                    project_root=str(project_root),
+                    source_context_root=str(context_root),
+                    format_context_path=str(context_root / "FORMAT_CONTEXT.md"),
+                    output_directory=str(output_root / project_name),
+                )
+                sources, errors = discover_context_sources(safe_name, paths)
+                self.assertEqual(errors, [])
+                self.assertIn(
+                    f"SBM-SUITE/{brand}/{directory_name}/README.md",
+                    {source.archive_path for source in sources},
+                )
+
+    def test_project_path_from_another_allowlisted_project_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            suite_root = Path(temporary_directory) / "suite"
+            context_root = suite_root / "context"
+            wrong_project = suite_root / "sbm" / "SBM-API"
+            wrong_project.mkdir(parents=True)
+            context_root.mkdir(parents=True)
+            _write_markdown(context_root / "FORMAT_CONTEXT.md", "Format")
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "does not match the project allowlist",
+            ):
+                validate_export_paths(
+                    project_name="dp-api",
+                    project_root=str(wrong_project),
+                    source_context_root=str(context_root),
+                    format_context_path=str(context_root / "FORMAT_CONTEXT.md"),
+                    output_directory=str(context_root / "output"),
                 )
 
 

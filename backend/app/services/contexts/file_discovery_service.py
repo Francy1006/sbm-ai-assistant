@@ -3,6 +3,10 @@ from pathlib import Path
 import re
 
 from app.services.contexts.models import ContextSource
+from app.services.project_registry import (
+    ProjectRegistryError,
+    get_project_location,
+)
 
 
 GLOBAL_CONTEXT_FILES = (
@@ -61,12 +65,12 @@ FULL_CONTEXT_FILE_MAPPINGS = (
     (
         "global",
         "context/PROJECT_CONTEXT.md",
-        "SBM-SUITE/PROJECT_CONTEXT.md",
+        "SBM-SUITE/context/PROJECT_CONTEXT.md",
     ),
     (
         "global",
         "context/README.md",
-        "SBM-SUITE/README.md",
+        "SBM-SUITE/context/README.md",
     ),
     (
         "global",
@@ -81,12 +85,12 @@ FULL_CONTEXT_FILE_MAPPINGS = (
     (
         "project",
         "context/PROJECT_CONTEXT.md",
-        "SBM-SUITE/{project_name}/context/PROJECT_CONTEXT.md",
+        "SBM-SUITE/{project_relative_root}/context/PROJECT_CONTEXT.md",
     ),
     (
         "project",
         "README.md",
-        "SBM-SUITE/{project_name}/README.md",
+        "SBM-SUITE/{project_relative_root}/README.md",
     ),
 )
 
@@ -205,24 +209,48 @@ def validate_export_paths(
     output_directory: str,
 ) -> tuple[str, ValidatedExportPaths]:
     safe_project_name = _validate_project_name(project_name)
+    try:
+        location = get_project_location(safe_project_name)
+    except ProjectRegistryError as exc:
+        raise ContextValidationError(str(exc)) from exc
+    safe_project_name = location.project_name
 
-    source_root = _resolve_existing_directory(
+    requested_context_root = _resolve_existing_directory(
         source_context_root,
         "source_context_root",
     )
+
+    context_root = (
+        requested_context_root
+        if requested_context_root.name == "context"
+        else requested_context_root / "context"
+    )
+    if not context_root.is_dir():
+        raise ContextValidationError(
+            "source_context_root must be /suite/context or its suite parent"
+        )
+    source_root = context_root.parent
 
     resolved_project_root = _resolve_existing_directory(
         project_root,
         "project_root",
     )
 
-    if (
-        resolved_project_root == source_root
-        or not resolved_project_root.is_relative_to(source_root)
-    ):
+    suite_root = context_root.parent
+    expected_project_root = suite_root / location.relative_root
+    if resolved_project_root != expected_project_root.absolute():
         raise ContextValidationError(
-            "project_root must be a child of source_context_root"
+            "project_root does not match the project allowlist"
         )
+    try:
+        expected_project_root = expected_project_root.resolve(strict=True)
+    except OSError as exc:
+        raise ContextValidationError(
+            "allowlisted project_root does not exist"
+        ) from exc
+
+    if resolved_project_root != expected_project_root:
+        raise ContextValidationError("project_root resolves outside the allowlist")
 
     resolved_format_context = _resolve_existing_file(
         format_context_path,
@@ -230,9 +258,7 @@ def validate_export_paths(
         source_root,
     )
 
-    expected_format_context = (
-        source_root / "context" / "FORMAT_CONTEXT.md"
-    ).resolve()
+    expected_format_context = (context_root / "FORMAT_CONTEXT.md").resolve()
 
     if resolved_format_context != expected_format_context:
         raise ContextValidationError(
@@ -353,7 +379,7 @@ def discover_context_sources(
             source_path=paths.project_root / relative_path,
             allowed_root=paths.source_context_root,
             archive_path=(
-                f"SBM-SUITE/{project_name}/{relative_path}"
+                f"SBM-SUITE/{project_relative_root}/{relative_path}"
             ),
             context_type=context_type,
             repository=paths.project_root.name,
@@ -394,8 +420,13 @@ def resolve_full_context_sources(
 
         source_path = root / relative_path
 
+        project_relative_root = paths.project_root.relative_to(
+            paths.source_context_root
+        ).as_posix()
+
         archive_path = archive_template.format(
-            project_name=project_name
+            project_name=project_name,
+            project_relative_root=project_relative_root,
         )
 
         validated_source = sources_by_path.get(source_path)

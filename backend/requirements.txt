@@ -9,3 +9,5 @@ beautifulsoup4
 APScheduler
 slack_sdk
 httpx2
+pytest
+pytest-django

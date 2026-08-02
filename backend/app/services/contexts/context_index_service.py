@@ -4,6 +4,7 @@ import hashlib
 import logging
 import time
 import uuid
+from pathlib import Path
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -36,6 +37,21 @@ logger.setLevel(logging.INFO)
 
 def content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _location_metadata(source: ContextSource) -> dict[str, str]:
+    parts = Path(source.archive_path).parts
+
+    if len(parts) >= 3 and parts[0] == "SBM-SUITE" and parts[1] != "context":
+        return {
+            "brand": parts[1],
+            "project_path": "/".join(parts[1:3]),
+        }
+
+    return {
+        "brand": "SBM",
+        "project_path": "context",
+    }
 
 
 def _point_id(
@@ -159,6 +175,7 @@ def index_context_source(
         return 0
 
     source_hash = content_hash(markdown)
+    location_metadata = _location_metadata(source)
     updated_at = datetime.fromtimestamp(
         source.source_path.stat().st_mtime,
         tz=timezone.utc,
@@ -221,6 +238,7 @@ def index_context_source(
                     "is_active": True,
                     "content_hash": source_hash,
                     "workflow": "context-deploy",
+                    **location_metadata,
                 },
                 collection_name=CONTEXT_COLLECTION_NAME,
             )
@@ -288,6 +306,7 @@ def index_context_source(
                 "content_hash": source_hash,
                 "workflow": "context-deploy",
                 "chunk_index": chunk.chunk_index,
+                **location_metadata,
             },
         )
         for point_id, vector, chunk in zip(point_ids, vectors, chunks)

@@ -14,13 +14,17 @@ from zipfile import BadZipFile, ZipFile, ZipInfo
 from app.config.settings import (
     DOCUMENTATION_UPGRADE_BACKUP_ROOT,
     DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT,
-    DOCUMENTATION_UPGRADE_INPUT_DIRECTORY,
+    DOCUMENTATION_UPGRADE_INPUT_ROOT,
 )
 from app.schemas.documentation import DocumentationUpgradeResponse
 from app.services.contexts.context_index_service import content_hash
 from app.services.contexts.file_discovery_service import (
     ContextValidationError,
     resolve_existing_directory,
+)
+from app.services.project_registry import (
+    ProjectRegistryError,
+    get_project_location,
 )
 
 
@@ -514,6 +518,10 @@ def validate_upgrade_manifest(
         raise ContextValidationError(
             "manifest.project_name must be " "a non-empty string"
         )
+    try:
+        project_name = get_project_location(project_name).project_name
+    except ProjectRegistryError as exc:
+        raise ContextValidationError(str(exc)) from exc
 
     if manifest.get("workflow") != UPGRADE_WORKFLOW:
         raise ContextValidationError("manifest.workflow must be " f"{UPGRADE_WORKFLOW}")
@@ -734,7 +742,7 @@ def validate_upgrade_manifest(
             )
 
     return (
-        project_name.strip(),
+        project_name,
         updated_files,
         targets,
     )
@@ -761,6 +769,8 @@ def create_upgrade_backup(
     backup_root: Path,
     project_name: str,
     timestamp: str,
+    generated_at: str,
+    reason: str,
 ) -> Path:
     backup_directory = backup_root / f"{timestamp}_{project_name}"
 
@@ -782,10 +792,47 @@ def create_upgrade_backup(
                 )
 
         for archive_path, target in targets.items():
+            previous_path = (
+                backup_directory / "previous" / PurePosixPath(archive_path)
+            )
             _copy_file(
                 target,
-                backup_directory / "previous" / PurePosixPath(archive_path),
+                previous_path,
             )
+
+        backed_up_files = []
+        sha256_by_file = {}
+        for archive_path, target in sorted(targets.items()):
+            previous_path = (
+                backup_directory / "previous" / PurePosixPath(archive_path)
+            )
+            original_hash = content_hash(
+                _read_utf8_file(target, archive_path)
+            )
+            sha256_by_file[archive_path] = original_hash
+            backed_up_files.append(
+                {
+                    "archive_path": archive_path,
+                    "original_path": str(target),
+                    "backup_path": str(previous_path),
+                    "sha256": original_hash,
+                }
+            )
+
+        backup_manifest = {
+            "project_name": project_name,
+            "workflow": UPGRADE_WORKFLOW,
+            "generated_at": generated_at,
+            "reason": reason,
+            "original_path": [item["original_path"] for item in backed_up_files],
+            "backup_path": str(backup_directory),
+            "sha256": sha256_by_file,
+            "backed_up_files": backed_up_files,
+        }
+        (backup_directory / "BACKUP_MANIFEST.json").write_text(
+            json.dumps(backup_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     except (
         OSError,
         shutil.Error,
@@ -892,11 +939,11 @@ def apply_replacements(
             staged_file = staging_directory.joinpath(*PurePosixPath(archive_path).parts)
             target = targets[archive_path]
 
+            replaced_files.append(archive_path)
             _atomic_replace_file(
                 staged_file,
                 target,
             )
-            replaced_files.append(archive_path)
 
         for archive_path in replaced_files:
             staged_file = staging_directory.joinpath(*PurePosixPath(archive_path).parts)
@@ -931,7 +978,7 @@ def cleanup_upgrade_input(
 
 
 def upgrade_documentation(
-    input_directory: str = (DOCUMENTATION_UPGRADE_INPUT_DIRECTORY),
+    input_directory: str = (DOCUMENTATION_UPGRADE_INPUT_ROOT),
     documentation_root: str = (DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT),
     backup_root: str = (DOCUMENTATION_UPGRADE_BACKUP_ROOT),
     now: Callable[[], datetime] = (datetime.now),
@@ -944,6 +991,10 @@ def upgrade_documentation(
         documentation_root,
         "documentation_upgrade_" "documentation_root",
     )
+    if input_path != (resolved_documentation_root / "input").resolve():
+        raise ContextValidationError(
+            "documentation upgrade input must be documentation_root/input"
+        )
     backup_path = Path(backup_root).expanduser()
 
     if not backup_path.is_absolute() or ".." in backup_path.parts:
@@ -963,6 +1014,10 @@ def upgrade_documentation(
                 "Unable to create documentation " "upgrade backup root"
             )
         ) from exc
+    if backup_path != (resolved_documentation_root.parent / "backup").resolve():
+        raise ContextValidationError(
+            "documentation upgrade backup must be /suite/context/backup"
+        )
 
     zip_path = locate_upgrade_zip(input_path)
 
@@ -993,7 +1048,8 @@ def upgrade_documentation(
             documentation_root=(resolved_documentation_root),
         )
 
-        timestamp = now().strftime("%Y%m%d_%H%M%S_%f")
+        generated_at = now()
+        timestamp = generated_at.strftime("%Y%m%d_%H%M%S_%f")
         backup_directory = create_upgrade_backup(
             staging_directory=(staging_directory),
             updated_files=updated_files,
@@ -1001,6 +1057,8 @@ def upgrade_documentation(
             backup_root=backup_path,
             project_name=project_name,
             timestamp=timestamp,
+            generated_at=generated_at.isoformat(),
+            reason=f"Apply validated documentation update for {project_name}",
         )
         apply_replacements(
             staging_directory=(staging_directory),

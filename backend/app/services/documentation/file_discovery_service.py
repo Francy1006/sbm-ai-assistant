@@ -7,12 +7,16 @@ from app.services.contexts.file_discovery_service import (
     ContextValidationError,
 )
 from app.services.documentation.models import DocumentationSource
+from app.services.project_registry import (
+    ProjectRegistryError,
+    get_project_location,
+)
 
 
 EXCLUDED_DIRECTORY_NAMES = {
     "input",
     "output",
-    "backups",
+    "backup",
     "__pycache__",
 }
 
@@ -138,6 +142,11 @@ def resolve_documentation_export_paths(
     safe_project_name = _validate_project_name(
         project_name
     )
+    try:
+        location = get_project_location(safe_project_name)
+    except ProjectRegistryError as exc:
+        raise ContextValidationError(str(exc)) from exc
+    safe_project_name = location.project_name
     resolved_project_root = (
         _resolve_existing_directory(
             project_root,
@@ -150,6 +159,27 @@ def resolve_documentation_export_paths(
             "documentation_root",
         )
     )
+
+    if (
+        resolved_documentation_root.name != "documentation"
+        or resolved_documentation_root.parent.name != "context"
+    ):
+        raise ContextValidationError(
+            "documentation_root must be /suite/context/documentation"
+        )
+    expected_project_root = (
+        resolved_documentation_root.parent.parent / location.relative_root
+    )
+    try:
+        expected_project_root = expected_project_root.resolve(strict=True)
+    except OSError as exc:
+        raise ContextValidationError(
+            "allowlisted project_root does not exist"
+        ) from exc
+    if resolved_project_root != expected_project_root:
+        raise ContextValidationError(
+            "project_root does not match the project allowlist"
+        )
 
     resolved_format_context = (
         _resolve_existing_file(

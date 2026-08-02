@@ -113,8 +113,10 @@ def _collect_git_log(project_root: Path) -> str:
     )
 
 
-def _collect_project_tree(project_root: Path) -> str:
-    project_tree_path = project_root / PROJECT_TREE_FILENAME
+def _collect_project_tree(source_context_root: Path) -> str:
+    project_tree_path = (
+        source_context_root / "context" / PROJECT_TREE_FILENAME
+    )
 
     if not project_tree_path.exists():
         return ""
@@ -286,7 +288,7 @@ def export_contexts(
         qa_results = request.qa_results or ""
         change_summary = request.change_summary or ""
         git_log = _collect_git_log(paths.project_root)
-        project_tree = _collect_project_tree(paths.project_root)
+        project_tree = _collect_project_tree(paths.source_context_root)
 
         query = build_context_query(
             project_name=project_name,

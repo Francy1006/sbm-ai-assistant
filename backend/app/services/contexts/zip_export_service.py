@@ -23,6 +23,7 @@ logger.setLevel(logging.INFO)
 
 FORMAT_CONTEXT_ARCHIVE_PATH = "FORMAT_CONTEXT.md"
 PROJECT_TREE_ARCHIVE_PATH = "project-tree.txt"
+PROJECT_TREE_SOURCE_PATH = "SBM-SUITE/context/project-tree.txt"
 
 
 def _render_retrieved_context(
@@ -81,12 +82,14 @@ def _project_tree_manifest(project_tree: str) -> dict:
     if not project_tree.strip():
         return {
             "included": False,
+            "source_path": PROJECT_TREE_SOURCE_PATH,
             "archive_path": None,
             "content_hash": None,
         }
 
     return {
         "included": True,
+        "source_path": PROJECT_TREE_SOURCE_PATH,
         "archive_path": PROJECT_TREE_ARCHIVE_PATH,
         "content_hash": content_hash(project_tree),
     }
