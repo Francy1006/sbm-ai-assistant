@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -26,6 +27,13 @@ from app.services.contexts.file_discovery_service import (
 UPGRADE_ZIP_NAME = "documentation-upgrade.zip"
 UPGRADE_WORKFLOW = "documentation-upgrade"
 DOCUMENTATION_ROOT_NAME = "documentation"
+REQUIRED_ROOT_FILES = frozenset(
+    {
+        "EXECUTIVE_README.md",
+        "COMMIT_MESSAGE.md",
+        "manifest.json",
+    }
+)
 INFORMATIONAL_FILES = frozenset(
     {
         "EXECUTIVE_README.md",
@@ -40,6 +48,41 @@ PROTECTED_DOCUMENTATION_PATHS = frozenset(
         "documentation/SYS_PROMPT.md",
     }
 )
+
+MAIN_PAGE_HEADINGS = [
+    "## 1. Overview",
+    "## 2. Scope",
+    "## 3. Current state",
+    "## 4. Core concepts",
+    "## 5. Architecture or operating model",
+    "## 6. Components",
+    "## 7. Workflows",
+    "## 8. Configuration",
+    "## 9. Security",
+    "## 10. Validation",
+    "## 11. Known limitations",
+    "## 12. Roadmap",
+    "## 13. Related pages",
+    "## 14. Subpages",
+    "## 15. Document boundary",
+]
+
+SUBPAGE_HEADINGS = [
+    "## 1. Overview",
+    "## 2. Scope",
+    "## 3. Current state",
+    "## 4. Detailed design or procedure",
+    "## 5. Inputs and prerequisites",
+    "## 6. Execution or usage",
+    "## 7. Outputs and evidence",
+    "## 8. Security considerations",
+    "## 9. Validation",
+    "## 10. Known limitations",
+    "## 11. Pending work",
+    "## 12. Related documentation",
+    "## 13. Parent page",
+    "## 14. Document boundary",
+]
 
 
 class DocumentationUpgradeOperationalError(RuntimeError):
@@ -231,54 +274,197 @@ def _read_utf8_file(
         raise ContextValidationError(f"{label} must be a readable UTF-8 file") from exc
 
 
+def _metadata_value(
+    lines: list[str],
+    marker_index: int,
+    marker: str,
+    archive_path: str,
+) -> str:
+    index = marker_index + 1
+
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+
+    while index < len(lines) and lines[index].strip() == ">":
+        index += 1
+
+    if index >= len(lines):
+        raise ContextValidationError(
+            f"Documentation metadata has no value after {marker!r}: "
+            f"{archive_path}"
+        )
+
+    value = lines[index].strip()
+
+    if not value.startswith(">"):
+        raise ContextValidationError(
+            f"Documentation metadata value must be a blockquote after "
+            f"{marker!r}: {archive_path}"
+        )
+
+    value = value[1:].strip()
+
+    if not value:
+        raise ContextValidationError(
+            f"Documentation metadata has an empty value after {marker!r}: "
+            f"{archive_path}"
+        )
+
+    return value
+
+
 def _validate_markdown_structure(
     markdown: str,
     archive_path: str,
 ) -> None:
+    lines = markdown.splitlines()
+
+    if not lines or not re.fullmatch(r"#\s+.+", lines[0].strip()):
+        raise ContextValidationError(
+            "Documentation file must begin with exactly one level-one heading: "
+            f"{archive_path}"
+        )
+
     headings = [
-        line.strip() for line in markdown.splitlines() if line.strip().startswith("#")
+        line.strip()
+        for line in lines
+        if re.fullmatch(r"#{1,6}\s+.+", line.strip())
     ]
 
-    if not headings:
-        raise ContextValidationError(
-            "Documentation file has no headings: " f"{archive_path}"
-        )
-
-    if not headings[0].startswith("# "):
-        raise ContextValidationError(
-            "Documentation file must begin with one "
-            f"level-one heading: {archive_path}"
-        )
-
-    level_one_headings = [heading for heading in headings if heading.startswith("# ")]
+    level_one_headings = [
+        heading for heading in headings if heading.startswith("# ")
+    ]
 
     if len(level_one_headings) != 1:
         raise ContextValidationError(
-            "Documentation file must contain exactly "
-            f"one level-one heading: {archive_path}"
+            "Documentation file must contain exactly one level-one heading: "
+            f"{archive_path}"
         )
 
-    required_metadata = (
-        "> **Last updated:**",
+    is_subpage = "/subpages/" in archive_path
+    last_updated_positions = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(
+            r"> \*\*Last updated:\*\* \d{4}-\d{2}-\d{2}",
+            line.strip(),
+        )
+    ]
+
+    if len(last_updated_positions) != 1:
+        raise ContextValidationError(
+            "Documentation metadata must contain exactly one "
+            f"'> **Last updated:** YYYY-MM-DD': {archive_path}"
+        )
+
+    required_metadata = [
+        *(["> **Parent page:**"] if is_subpage else []),
         "> **Purpose:**",
         "> **Source of truth:**",
-    )
+    ]
+
+    positions: list[int] = [last_updated_positions[0]]
 
     for marker in required_metadata:
-        if marker not in markdown:
+        marker_positions = [
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == marker
+        ]
+
+        if len(marker_positions) != 1:
             raise ContextValidationError(
-                "Documentation metadata is missing " f"{marker!r}: {archive_path}"
+                f"Documentation metadata must contain exactly one {marker!r}: "
+                f"{archive_path}"
             )
 
-    if "## " not in markdown:
+        positions.append(marker_positions[0])
+
+    if positions != sorted(positions):
         raise ContextValidationError(
-            "Documentation file must contain " f"level-two sections: {archive_path}"
+            "Documentation metadata labels are out of order: "
+            f"{archive_path}"
         )
 
-    if "Document boundary" not in markdown:
-        raise ContextValidationError(
-            "Documentation file must preserve a " f"document boundary: {archive_path}"
+    forbidden_variants = (
+        "> **Last updated**",
+        "> **Purpose**",
+        "> **Source of truth**",
+        "> **Parent page**",
+    )
+
+    for marker in forbidden_variants:
+        if any(line.strip() == marker for line in lines):
+            raise ContextValidationError(
+                "Documentation metadata label is missing final colon "
+                f"{marker!r}: {archive_path}"
+            )
+
+    for marker, marker_index in zip(required_metadata, positions[1:]):
+        value = _metadata_value(
+            lines,
+            marker_index,
+            marker,
+            archive_path,
         )
+
+        if marker == "> **Parent page:**":
+            if not re.fullmatch(r"`[^`]+`", value):
+                raise ContextValidationError(
+                    "Documentation Parent page value must be one "
+                    f"repository-relative path in backticks: {archive_path}"
+                )
+
+            parent_path = value[1:-1]
+
+            if (
+                parent_path.startswith("/")
+                or ".." in PurePosixPath(parent_path).parts
+                or not parent_path.endswith(".md")
+            ):
+                raise ContextValidationError(
+                    f"Invalid documentation Parent page path: {archive_path}"
+                )
+
+    actual_h2_headings = [
+        heading for heading in headings if heading.startswith("## ")
+    ]
+    expected_h2_headings = (
+        SUBPAGE_HEADINGS if is_subpage else MAIN_PAGE_HEADINGS
+    )
+
+    if actual_h2_headings != expected_h2_headings:
+        raise ContextValidationError(
+            "Documentation level-two headings do not match FORMAT_CONTEXT.md: "
+            f"{archive_path}"
+        )
+
+    if is_subpage:
+        parent_heading_index = lines.index("## 13. Parent page")
+        parent_section = lines[parent_heading_index + 1 :]
+
+        next_h2_index = next(
+            (
+                index
+                for index, line in enumerate(parent_section)
+                if line.strip().startswith("## ")
+            ),
+            len(parent_section),
+        )
+        parent_section = parent_section[:next_h2_index]
+
+        return_links = [
+            line.strip()
+            for line in parent_section
+            if re.fullmatch(r"\[Return to .+\]\(.+\.md\)", line.strip())
+        ]
+
+        if len(return_links) != 1:
+            raise ContextValidationError(
+                "Documentation subpage must contain exactly one parent return link: "
+                f"{archive_path}"
+            )
+
 
 
 def _resolve_target(
@@ -411,6 +597,18 @@ def validate_upgrade_manifest(
     declared_allowlist = set(allowed_files)
     actual_without_manifest = actual_files - {"manifest.json"}
 
+    missing_required_files = REQUIRED_ROOT_FILES - actual_files
+    if missing_required_files:
+        raise ContextValidationError(
+            "ZIP is missing required files: "
+            + ", ".join(sorted(missing_required_files))
+        )
+
+    if "manifest.json" not in declared_allowlist:
+        raise ContextValidationError(
+            "manifest.allowed_files must include manifest.json"
+        )
+
     system_allowlist = set(INFORMATIONAL_FILES)
     documentation_paths = {
         path
@@ -432,11 +630,23 @@ def validate_upgrade_manifest(
         )
 
     undeclared_files = actual_files - declared_allowlist
+    missing_declared_files = declared_allowlist - actual_files
+
+    if missing_declared_files:
+        raise ContextValidationError(
+            "manifest.allowed_files contains files absent from ZIP: "
+            + ", ".join(sorted(missing_declared_files))
+        )
 
     if undeclared_files:
         raise ContextValidationError(
             "ZIP contains files absent from "
             "manifest.allowed_files: " + ", ".join(sorted(undeclared_files))
+        )
+
+    if not set(updated_files).issubset(declared_allowlist):
+        raise ContextValidationError(
+            "manifest.updated_files must be a subset of manifest.allowed_files"
         )
 
     if set(updated_files) != (actual_without_manifest):
@@ -456,6 +666,49 @@ def validate_upgrade_manifest(
     if not replaceable_files:
         raise ContextValidationError(
             "Upgrade ZIP must contain at least " "one documentation file"
+        )
+
+    for archive_path, digest in content_hashes.items():
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ContextValidationError(
+                f"manifest.content_hashes contains invalid SHA-256 for {archive_path}"
+            )
+
+    commit_type = commit_metadata.get("type")
+    commit_scope = commit_metadata.get("scope")
+    commit_subject = commit_metadata.get("subject")
+    commit_message_file = commit_metadata.get("message_file")
+
+    if commit_message_file != "COMMIT_MESSAGE.md":
+        raise ContextValidationError(
+            "manifest.commit.message_file must be COMMIT_MESSAGE.md"
+        )
+
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (commit_type, commit_scope, commit_subject)
+    ):
+        raise ContextValidationError(
+            "manifest.commit type, scope and subject must be non-empty strings"
+        )
+
+    if commit_type not in {"docs", "chore", "refactor", "fix", "feat"}:
+        raise ContextValidationError(
+            f"Unsupported manifest.commit.type: {commit_type}"
+        )
+
+    commit_message = _read_utf8_file(
+        staging_directory / "COMMIT_MESSAGE.md",
+        "COMMIT_MESSAGE.md",
+    )
+    first_line = next(
+        (line.strip() for line in commit_message.splitlines() if line.strip()),
+        "",
+    )
+    expected_commit = f"{commit_type}({commit_scope}): {commit_subject}"
+    if first_line != expected_commit:
+        raise ContextValidationError(
+            "manifest.commit metadata does not match COMMIT_MESSAGE.md"
         )
 
     targets: dict[str, Path] = {}

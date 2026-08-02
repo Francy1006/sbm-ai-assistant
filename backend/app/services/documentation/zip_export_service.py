@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import tempfile
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -25,6 +26,50 @@ logger.setLevel(logging.INFO)
 FORMAT_CONTEXT_ARCHIVE_PATH = "FORMAT_CONTEXT.md"
 SYSTEM_PROMPT_ARCHIVE_PATH = "SYS_PROMPT.md"
 PROJECT_TREE_ARCHIVE_PATH = "project-tree.txt"
+DOCUMENTATION_FILES_ARCHIVE_PATH = "documentation-files.txt"
+PROJECT_NAME_TEMPLATE = "{{PROJECT_NAME}}"
+UNRESOLVED_TEMPLATE_PATTERN = re.compile(r"{{[A-Z0-9_]+}}")
+
+
+
+def _read_contract(path: Path, label: str) -> str:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be an existing regular file")
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"{label} must be readable UTF-8") from exc
+
+    if not content.strip():
+        raise ValueError(f"{label} must not be empty")
+
+    return content
+
+
+def _render_system_prompt(
+    system_prompt_path: Path,
+    project_name: str,
+) -> str:
+    source = _read_contract(system_prompt_path, "SYS_PROMPT.md")
+
+    if PROJECT_NAME_TEMPLATE not in source:
+        raise ValueError(
+            "SYS_PROMPT.md must contain {{PROJECT_NAME}}"
+        )
+
+    rendered = source.replace(PROJECT_NAME_TEMPLATE, project_name)
+    unresolved = sorted(
+        set(UNRESOLVED_TEMPLATE_PATTERN.findall(rendered))
+    )
+
+    if unresolved:
+        raise ValueError(
+            "SYS_PROMPT.md contains unresolved template tokens: "
+            + ", ".join(unresolved)
+        )
+
+    return rendered
 
 
 def _render_retrieved_chunks(
@@ -110,23 +155,33 @@ def create_documentation_package(
 ) -> Path:
     destination = output_directory / "documentation-package.zip"
 
-    files_by_archive_path = {
-        documentation_file.archive_path: documentation_file
+    format_context_content = _read_contract(
+        format_context_path,
+        "FORMAT_CONTEXT.md",
+    )
+    rendered_system_prompt = _render_system_prompt(
+        system_prompt_path,
+        project_name,
+    )
+
+    packaged_documentation_files = [
+        documentation_file
         for documentation_file in documentation_files
-    }
+        if documentation_file.archive_path
+        not in {
+            FORMAT_CONTEXT_ARCHIVE_PATH,
+            SYSTEM_PROMPT_ARCHIVE_PATH,
+        }
+    ]
 
-    format_context_file = files_by_archive_path.get(
-        FORMAT_CONTEXT_ARCHIVE_PATH
+    documentation_paths = sorted(
+        documentation_file.archive_path
+        for documentation_file in packaged_documentation_files
     )
-    system_prompt_file = files_by_archive_path.get(
-        SYSTEM_PROMPT_ARCHIVE_PATH
+    documentation_files_content = _text_file(
+        "\n".join(documentation_paths),
+        "No authorized documentation files were discovered.",
     )
-
-    if format_context_file is None:
-        raise ValueError("FORMAT_CONTEXT.md documentation file is required")
-
-    if system_prompt_file is None:
-        raise ValueError("SYS_PROMPT.md documentation file is required")
 
     normalized_project_tree = project_tree.strip()
     project_tree_manifest = _project_tree_manifest(
@@ -134,10 +189,21 @@ def create_documentation_package(
     )
 
     content_hashes = {
-        documentation_file.archive_path: content_hash(
-            documentation_file.content
-        )
-        for documentation_file in documentation_files
+        FORMAT_CONTEXT_ARCHIVE_PATH: content_hash(
+            format_context_content
+        ),
+        SYSTEM_PROMPT_ARCHIVE_PATH: content_hash(
+            rendered_system_prompt
+        ),
+        DOCUMENTATION_FILES_ARCHIVE_PATH: content_hash(
+            documentation_files_content
+        ),
+        **{
+            documentation_file.archive_path: content_hash(
+                documentation_file.content
+            )
+            for documentation_file in packaged_documentation_files
+        },
     }
 
     if normalized_project_tree:
@@ -186,7 +252,7 @@ def create_documentation_package(
                 "source_path": str(documentation_file.source_path),
                 "archive_path": documentation_file.archive_path,
             }
-            for documentation_file in documentation_files
+            for documentation_file in packaged_documentation_files
         ],
         "format_context_file": {
             "source_path": str(format_context_path),
@@ -199,6 +265,11 @@ def create_documentation_package(
             "archive_path": SYSTEM_PROMPT_ARCHIVE_PATH,
             "protected": True,
             "complete": True,
+            "rendered_project_name": project_name,
+        },
+        "documentation_files_file": {
+            "archive_path": DOCUMENTATION_FILES_ARCHIVE_PATH,
+            "content_hash": content_hash(documentation_files_content),
         },
         "project_tree": project_tree_manifest,
         "content_hashes": content_hashes,
@@ -234,6 +305,18 @@ def create_documentation_package(
             mode="w",
             compression=ZIP_DEFLATED,
         ) as archive:
+            archive.writestr(
+                FORMAT_CONTEXT_ARCHIVE_PATH,
+                format_context_content,
+            )
+            archive.writestr(
+                SYSTEM_PROMPT_ARCHIVE_PATH,
+                rendered_system_prompt,
+            )
+            archive.writestr(
+                DOCUMENTATION_FILES_ARCHIVE_PATH,
+                documentation_files_content,
+            )
             archive.writestr(
                 "retrieved-documentation.md",
                 _render_retrieved_chunks(
@@ -292,7 +375,7 @@ def create_documentation_package(
                     normalized_project_tree,
                 )
 
-            for documentation_file in documentation_files:
+            for documentation_file in packaged_documentation_files:
                 archive.writestr(
                     documentation_file.archive_path,
                     documentation_file.content,

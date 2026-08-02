@@ -38,9 +38,16 @@ def content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def canonical_source_path(
+    source: DocumentationSource,
+) -> str:
+    # Identidad estable entre local, Docker y produccion
+    return source.archive_path.lstrip("/")
+
+
 def _point_id(
     project_name: str,
-    source_path: str,
+    canonical_path: str,
     source_hash: str,
     chunk: DocumentationChunk,
 ) -> str:
@@ -48,7 +55,7 @@ def _point_id(
         (
             "documentation-deploy",
             project_name,
-            source_path,
+            canonical_path,
             source_hash,
             str(chunk.chunk_index),
             chunk.section,
@@ -59,7 +66,7 @@ def _point_id(
 
 def _source_filter(
     project_name: str,
-    source_path: str,
+    canonical_path: str,
     active_only: bool = False,
 ) -> Filter:
     conditions = [
@@ -68,8 +75,8 @@ def _source_filter(
             match=MatchValue(value=project_name),
         ),
         FieldCondition(
-            key="source_path",
-            match=MatchValue(value=source_path),
+            key="canonical_source_path",
+            match=MatchValue(value=canonical_path),
         ),
         FieldCondition(
             key="workflow",
@@ -95,30 +102,14 @@ def _scroll_source_points(
     project_name: str,
     active_only: bool,
 ) -> list:
-    source_paths = [str(source.source_path)]
-
-    if (
-        source.legacy_source_path
-        and source.legacy_source_path not in source_paths
-    ):
-        source_paths.append(source.legacy_source_path)
-
-    points_by_id = {}
-
-    for source_path in source_paths:
-        points = scroll_all_points(
-            scroll_filter=_source_filter(
-                project_name,
-                source_path,
-                active_only=active_only,
-            ),
-            collection_name=DOCUMENTATION_COLLECTION_NAME,
-        )
-
-        for point in points:
-            points_by_id[str(point.id)] = point
-
-    return list(points_by_id.values())
+    return scroll_all_points(
+        scroll_filter=_source_filter(
+            project_name=project_name,
+            canonical_path=canonical_source_path(source),
+            active_only=active_only,
+        ),
+        collection_name=DOCUMENTATION_COLLECTION_NAME,
+    )
 
 
 def _points_match_unchanged_content(
@@ -129,10 +120,7 @@ def _points_match_unchanged_content(
     if len(points) != len(chunks):
         return False
 
-    expected_chunks = {
-        (chunk.chunk_index, chunk.section)
-        for chunk in chunks
-    }
+    expected_chunks = {(chunk.chunk_index, chunk.section) for chunk in chunks}
     indexed_chunks = {
         (
             point.payload.get("chunk_index"),
@@ -166,10 +154,7 @@ def index_documentation_source(
     point_ids = [
         _point_id(
             project_name=project_name,
-            source_path=(
-                source.legacy_source_path
-                or str(source.source_path)
-            ),
+            canonical_path=canonical_source_path(source),
             source_hash=source_hash,
             chunk=chunk,
         )
@@ -199,13 +184,10 @@ def index_documentation_source(
             len(active_points),
         )
 
-        if (
-            active_point_ids == set(point_ids)
-            or _points_match_unchanged_content(
-                active_points,
-                chunks,
-                source_hash,
-            )
+        if active_point_ids == set(point_ids) or _points_match_unchanged_content(
+            active_points,
+            chunks,
+            source_hash,
         ):
             update_points_payload(
                 point_ids=[point.id for point in active_points],
@@ -215,6 +197,7 @@ def index_documentation_source(
                     "repository": source.repository,
                     "documentation_type": source.documentation_type,
                     "source_path": str(source.source_path),
+                    "canonical_source_path": canonical_source_path(source),
                     "archive_path": source.archive_path,
                     "updated_at": updated_at,
                     "version": source_hash[:12],
@@ -254,8 +237,7 @@ def index_documentation_source(
 
     if len(vectors) != len(chunks):
         raise ValueError(
-            "Embedding service returned a different number of vectors "
-            "than chunks"
+            "Embedding service returned a different number of vectors " "than chunks"
         )
 
     vector_size = len(vectors[0])
@@ -281,6 +263,7 @@ def index_documentation_source(
                 "documentation_type": source.documentation_type,
                 "section": chunk.section,
                 "source_path": str(source.source_path),
+                "canonical_source_path": canonical_source_path(source),
                 "archive_path": source.archive_path,
                 "updated_at": updated_at,
                 "version": source_hash[:12],
@@ -319,16 +302,14 @@ def index_documentation_source(
         active_only=False,
     )
     logger.info(
-        "[DOCUMENTATION_EXPORT] obsolete chunk lookup complete "
-        "source=%s points=%d",
+        "[DOCUMENTATION_EXPORT] obsolete chunk lookup complete " "source=%s points=%d",
         source.source_path,
         len(previous_points),
     )
     obsolete_ids = [
         point.id
         for point in previous_points
-        if str(point.id) not in current_ids
-        and point.payload.get("is_active", False)
+        if str(point.id) not in current_ids and point.payload.get("is_active", False)
     ]
     logger.info(
         "[DOCUMENTATION_EXPORT] obsolete chunk deactivation start "

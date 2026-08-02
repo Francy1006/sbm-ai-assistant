@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes.ai import router as ai_router
+from app.api.routes.documentation import router as documentation_router
 from app.api.routes.confluence import router as confluence_router
 from app.api.routes.contexts import router as contexts_router
 from app.api.routes.health import router as health_router
@@ -31,3 +32,4 @@ app.include_router(slack_router)
 app.include_router(confluence_router)
 app.include_router(ai_router)
 app.include_router(contexts_router)
+app.include_router(documentation_router)
