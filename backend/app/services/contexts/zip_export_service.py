@@ -95,6 +95,26 @@ def _project_tree_manifest(project_tree: str) -> dict:
     }
 
 
+def _section_hashes(markdown: str) -> dict[str, str]:
+    lines = markdown.splitlines(keepends=True)
+    headings = [
+        (index, line.strip(), len(line) - len(line.lstrip("#")))
+        for index, line in enumerate(lines)
+        if line.startswith("#")
+        and len(line) - len(line.lstrip("#")) in {1, 2}
+        and line.lstrip("#").startswith(" ")
+    ]
+    hashes: dict[str, str] = {}
+    for position, (start, heading, level) in enumerate(headings):
+        end = len(lines)
+        for candidate_start, _, candidate_level in headings[position + 1 :]:
+            if candidate_level <= level:
+                end = candidate_start
+                break
+        hashes[heading] = content_hash("".join(lines[start:end]))
+    return hashes
+
+
 def create_context_package(
     output_directory: Path,
     project_name: str,
@@ -109,6 +129,11 @@ def create_context_package(
     top_k: int,
     full_context_files: list[FullContextFile],
     missing_full_context_files: list[str],
+    contract_version: str,
+    supported_patch_paths: list[str],
+    canonical_project_path: str,
+    lifecycle_phase: str,
+    objective_id: str | None,
 ) -> Path:
     destination = output_directory / "context-package.zip"
 
@@ -172,6 +197,21 @@ def create_context_package(
         )
         for context_file in full_context_files
     }
+    full_target_files = sorted(
+        context_file.archive_path
+        for context_file in packaged_context_files
+        if context_file.archive_path != "FORMAT_CONTEXT.md"
+    )
+    target_content_hashes = {
+        context_file.archive_path: content_hash(context_file.content)
+        for context_file in packaged_context_files
+        if context_file.archive_path != "FORMAT_CONTEXT.md"
+    }
+    target_section_hashes = {
+        context_file.archive_path: _section_hashes(context_file.content)
+        for context_file in packaged_context_files
+        if context_file.archive_path != "FORMAT_CONTEXT.md"
+    }
 
     normalized_project_tree = project_tree.strip()
     packaged_project_tree = (
@@ -191,6 +231,11 @@ def create_context_package(
     manifest = {
         "project_name": project_name,
         "workflow": "context-deploy",
+        "contract_version": contract_version,
+        "supported_patch_paths": supported_patch_paths,
+        "canonical_project_path": canonical_project_path,
+        "lifecycle_phase": lifecycle_phase,
+        "objective_id": objective_id,
         "generated_at": datetime.now(
             timezone.utc
         ).isoformat(),
@@ -218,6 +263,14 @@ def create_context_package(
         "missing_full_context_files": (
             missing_full_context_files
         ),
+        "full_target_files": full_target_files,
+        "target_content_hashes": target_content_hashes,
+        "target_section_hashes": target_section_hashes,
+        "missing_full_target_files": [
+            path
+            for path in missing_full_context_files
+            if path != "FORMAT_CONTEXT.md"
+        ],
         "content_hashes": content_hashes,
         "filters_applied": {
             "project_name": project_name,

@@ -8,6 +8,14 @@ from app.services.contexts.context_index_service import (
     CONTEXT_COLLECTION_NAME,
     index_context_source,
 )
+from app.services.contexts.contract_registry import (
+    PATCH_DEFINITIONS,
+    build_contract_version,
+    canonical_project_path,
+    patch_target_file,
+    supported_patch_paths,
+    validate_format_context,
+)
 from app.services.contexts.context_retrieval_service import (
     build_context_query,
     retrieve_relevant_context_chunks,
@@ -160,6 +168,13 @@ def export_contexts(
         format_context_path=request.format_context_path,
         output_directory=request.output_directory,
     )
+    try:
+        format_markdown = paths.format_context_path.read_text(encoding="utf-8")
+        validate_format_context(format_markdown)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ContextValidationError(
+            f"FORMAT_CONTEXT.md/backend contract divergence: {exc}"
+        ) from exc
 
     logger.info(
         "[CONTEXT_EXPORT] file discovery start project=%s",
@@ -237,6 +252,21 @@ def export_contexts(
         )
         for source in full_context_sources
     ]
+
+    required_full_targets = {
+        patch_target_file(patch_path, project_name)
+        for patch_path, definition in PATCH_DEFINITIONS.items()
+        if request.lifecycle_phase in definition.lifecycle_phases
+    }
+    missing_required_targets = required_full_targets & set(
+        missing_full_context_files
+    )
+    if missing_required_targets:
+        raise ContextValidationError(
+            "Missing mandatory full target files for lifecycle phase "
+            f"{request.lifecycle_phase}: "
+            + ", ".join(sorted(missing_required_targets))
+        )
 
     errors.extend(
         f"Missing authorized full context file: {archive_path}"
@@ -343,6 +373,11 @@ def export_contexts(
             top_k=CONTEXT_EXPORT_TOP_K,
             full_context_files=full_context_files,
             missing_full_context_files=missing_full_context_files,
+            contract_version=build_contract_version(format_markdown),
+            supported_patch_paths=supported_patch_paths(),
+            canonical_project_path=canonical_project_path(project_name),
+            lifecycle_phase=request.lifecycle_phase,
+            objective_id=request.objective_id,
         )
     except Exception as exc:
         logger.exception(
@@ -362,6 +397,8 @@ def export_contexts(
         status="completed",
         project_name=project_name,
         workflow="context-deploy",
+        lifecycle_phase=request.lifecycle_phase,
+        objective_id=request.objective_id,
         context_zip_path=str(context_zip_path),
         indexed_source_count=indexed_source_count,
         chunk_count=chunk_count,

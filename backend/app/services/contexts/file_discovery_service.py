@@ -23,6 +23,12 @@ GLOBAL_CONTEXT_FILES = (
         "README.md",
     ),
     (
+        "context/COMPLETED_OBJECTIVES.md",
+        "context/COMPLETED_OBJECTIVES.md",
+        "completed_objectives",
+        "COMPLETED_OBJECTIVES.md",
+    ),
+    (
         "context/SUITE_CONTEXT.md",
         "context/SUITE_CONTEXT.md",
         "suite_context",
@@ -39,6 +45,24 @@ GLOBAL_CONTEXT_FILES = (
         "context/QA_CONTEXT.md",
         "qa_context",
         "context/QA_CONTEXT.md",
+    ),
+    (
+        "context/SECURITY_CONTEXT.md",
+        "context/SECURITY_CONTEXT.md",
+        "security_context",
+        "context/SECURITY_CONTEXT.md",
+    ),
+    (
+        "context/DATA_CONTEXT.md",
+        "context/DATA_CONTEXT.md",
+        "data_context",
+        "context/DATA_CONTEXT.md",
+    ),
+    (
+        "context/DECISIONS_CONTEXT.md",
+        "context/DECISIONS_CONTEXT.md",
+        "decisions_context",
+        "context/DECISIONS_CONTEXT.md",
     ),
     (
         "context/SYS_PROMPT.md",
@@ -79,6 +103,36 @@ FULL_CONTEXT_FILE_MAPPINGS = (
     ),
     (
         "global",
+        "context/COMPLETED_OBJECTIVES.md",
+        "SBM-SUITE/context/COMPLETED_OBJECTIVES.md",
+    ),
+    (
+        "global",
+        "context/QA_CONTEXT.md",
+        "SBM-SUITE/context/QA_CONTEXT.md",
+    ),
+    (
+        "global",
+        "context/BUSINESS_CONTEXT.md",
+        "SBM-SUITE/context/BUSINESS_CONTEXT.md",
+    ),
+    (
+        "global",
+        "context/SECURITY_CONTEXT.md",
+        "SBM-SUITE/context/SECURITY_CONTEXT.md",
+    ),
+    (
+        "global",
+        "context/DATA_CONTEXT.md",
+        "SBM-SUITE/context/DATA_CONTEXT.md",
+    ),
+    (
+        "global",
+        "context/DECISIONS_CONTEXT.md",
+        "SBM-SUITE/context/DECISIONS_CONTEXT.md",
+    ),
+    (
+        "global",
         "context/FORMAT_CONTEXT.md",
         "FORMAT_CONTEXT.md",
     ),
@@ -91,6 +145,16 @@ FULL_CONTEXT_FILE_MAPPINGS = (
         "project",
         "README.md",
         "SBM-SUITE/{project_relative_root}/README.md",
+    ),
+    (
+        "project",
+        "context/QA_CONTEXT.md",
+        "SBM-SUITE/{project_relative_root}/context/QA_CONTEXT.md",
+    ),
+    (
+        "project",
+        "context/DEPLOY_CONTEXT.md",
+        "SBM-SUITE/{project_relative_root}/context/DEPLOY_CONTEXT.md",
     ),
 )
 

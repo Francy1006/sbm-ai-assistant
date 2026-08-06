@@ -12,9 +12,21 @@ from fastapi.testclient import TestClient
 from qdrant_client.models import Distance
 
 from app.api.routes.contexts import router
-from app.schemas.contexts import ContextExportRequest
+from app.schemas.contexts import ContextExportRequest, ContextExportResponse
 from app.services.contexts.context_export_service import export_contexts
-from app.services.contexts.context_index_service import index_context_source
+from app.services.contexts.context_index_service import (
+    _deactivate_obsolete_path_points,
+    index_context_source,
+)
+from app.services.contexts.contract_registry import (
+    LIFECYCLE_PHASES,
+    PATCH_DEFINITIONS,
+    build_contract_version,
+    canonical_projects,
+    patch_target_file,
+    supported_patch_paths,
+    validate_format_context,
+)
 from app.services.contexts.context_retrieval_service import (
     retrieve_relevant_context_chunks,
 )
@@ -31,6 +43,11 @@ from app.services.contexts.models import (
     RetrievedContextChunk,
 )
 from app.services.qdrant_service import create_collection, scroll_all_points
+from app.services.project_registry import (
+    ProjectRegistryError,
+    repository_to_runtime_path,
+    runtime_to_repository_path,
+)
 
 
 GLOBAL_SOURCE_FILES = (
@@ -39,9 +56,43 @@ GLOBAL_SOURCE_FILES = (
     ("context/SUITE_CONTEXT.md", "context/SUITE_CONTEXT.md"),
     ("context/BUSINESS_CONTEXT.md", "context/BUSINESS_CONTEXT.md"),
     ("context/QA_CONTEXT.md", "context/QA_CONTEXT.md"),
+    ("context/COMPLETED_OBJECTIVES.md", "context/COMPLETED_OBJECTIVES.md"),
+    ("context/SECURITY_CONTEXT.md", "context/SECURITY_CONTEXT.md"),
+    ("context/DATA_CONTEXT.md", "context/DATA_CONTEXT.md"),
+    ("context/DECISIONS_CONTEXT.md", "context/DECISIONS_CONTEXT.md"),
     ("context/SYS_PROMPT.md", "context/SYS_PROMPT.md"),
     ("context/FORMAT_CONTEXT.md", "context/FORMAT_CONTEXT.md"),
 )
+
+
+def _valid_format_contract(project_name: str = "dp-api") -> str:
+    titles = (
+        "Global rules",
+        "Global `PROJECT_CONTEXT.md`",
+        "Global `COMPLETED_OBJECTIVES.md`",
+        "Global `SUITE_CONTEXT.md`",
+        "Global `BUSINESS_CONTEXT.md`",
+        "Global `QA_CONTEXT.md`",
+        "Global `SECURITY_CONTEXT.md`",
+        "Global `DATA_CONTEXT.md`",
+        "Global `DECISIONS_CONTEXT.md`",
+        "Global `SYS_PROMPT.md`",
+        "Project `context/PROJECT_CONTEXT.md`",
+        "Project `context/QA_CONTEXT.md`",
+        "Project `context/DEPLOY_CONTEXT.md`",
+        "Project and suite `README.md`",
+    )
+    sections = ["# FORMAT_CONTEXT.md", ""]
+    for number, title in enumerate(titles, start=1):
+        sections.extend([f"## {number}. {title}", ""])
+        if number == 14:
+            sections.extend(["README headings are repository-owned.", ""])
+    sections.append("### Output patch mappings")
+    sections.append("")
+    for path, definition in PATCH_DEFINITIONS.items():
+        target = patch_target_file(path, project_name)
+        sections.extend([path, f"→ {target}", ""])
+    return "\n".join(sections)
 
 PROJECT_FILES = (
     "README.md",
@@ -53,10 +104,78 @@ PROJECT_FILES = (
 
 def _write_markdown(path: Path, title: str):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# {title}\n\nContenido de prueba.", encoding="utf-8")
+    content = (
+        _valid_format_contract()
+        if path.name == "FORMAT_CONTEXT.md"
+        else f"# {title}\n\nContenido de prueba."
+    )
+    path.write_text(content, encoding="utf-8")
 
 
 class ContextExportEndpointTests(unittest.TestCase):
+    def test_contract_endpoint_uses_runtime_registry(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            context_root = Path(temporary_directory) / "context"
+            format_path = context_root / "FORMAT_CONTEXT.md"
+            _write_markdown(format_path, "FORMAT_CONTEXT.md")
+            app = FastAPI()
+            app.include_router(router)
+
+            with patch(
+                "app.api.routes.contexts."
+                "CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT",
+                str(context_root),
+            ):
+                response = TestClient(app).get("/contexts/contract")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json(),
+                {
+                    "contract_version": build_contract_version(
+                        format_path.read_text(encoding="utf-8")
+                    ),
+                    "supported_patch_paths": supported_patch_paths(),
+                    "lifecycle_phases": list(LIFECYCLE_PHASES),
+                    "canonical_projects": canonical_projects(),
+                },
+            )
+
+    def test_export_blocks_format_backend_divergence(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            suite_root = Path(temporary_directory) / "SBM-SUITE"
+            context_root = suite_root / "context"
+            project_root = suite_root / "dp" / "DP-API"
+            output_root = context_root / "output"
+            context_root.mkdir(parents=True)
+            project_root.mkdir(parents=True)
+            output_root.mkdir()
+            format_path = context_root / "FORMAT_CONTEXT.md"
+            format_path.write_text(
+                _valid_format_contract().replace(
+                    "## 14. Project and suite `README.md`",
+                    "## 13. Project and suite `README.md`",
+                ),
+                encoding="utf-8",
+            )
+            request = ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="implementation-progress",
+                objective_id="OBJ-001",
+                project_root=str(project_root),
+                source_context_root=str(suite_root),
+                format_context_path=str(format_path),
+                output_directory=str(output_root),
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "FORMAT_CONTEXT.md/backend contract divergence",
+            ):
+                export_contexts(request)
+
+
     def test_endpoint_exports_only_allowlisted_files_and_manifest(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             suite_root = Path(temporary_directory) / "SBM-SUITE"
@@ -99,6 +218,8 @@ class ContextExportEndpointTests(unittest.TestCase):
             request_body = {
                 "project_name": "dp-api",
                 "workflow": "context-deploy",
+                "lifecycle_phase": "implementation-progress",
+                "objective_id": "OBJ-001",
                 "project_root": str(project_root),
                 "source_context_root": str(suite_root),
                 "format_context_path": str(
@@ -167,7 +288,12 @@ class ContextExportEndpointTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             self.assertEqual(payload["status"], "completed")
-            self.assertEqual(payload["indexed_source_count"], 11)
+            self.assertEqual(
+                payload["lifecycle_phase"],
+                "implementation-progress",
+            )
+            self.assertEqual(payload["objective_id"], "OBJ-001")
+            self.assertEqual(payload["indexed_source_count"], 15)
             self.assertEqual(payload["collection_name"], "sbm_contexts")
             self.assertEqual(payload["errors"], [])
             self.assertTrue(
@@ -215,28 +341,28 @@ class ContextExportEndpointTests(unittest.TestCase):
                     "SBM-SUITE/context/PROJECT_CONTEXT.md",
                     "SBM-SUITE/context/README.md",
                     "SBM-SUITE/context/SUITE_CONTEXT.md",
+                    "SBM-SUITE/context/COMPLETED_OBJECTIVES.md",
+                    "SBM-SUITE/context/BUSINESS_CONTEXT.md",
+                    "SBM-SUITE/context/QA_CONTEXT.md",
+                    "SBM-SUITE/context/SECURITY_CONTEXT.md",
+                    "SBM-SUITE/context/DATA_CONTEXT.md",
+                    "SBM-SUITE/context/DECISIONS_CONTEXT.md",
                     (
                         "SBM-SUITE/dp/DP-API/context/"
                         "PROJECT_CONTEXT.md"
                     ),
                     "SBM-SUITE/dp/DP-API/README.md",
+                    "SBM-SUITE/dp/DP-API/context/QA_CONTEXT.md",
+                    "SBM-SUITE/dp/DP-API/context/DEPLOY_CONTEXT.md",
                 }
                 self.assertEqual(names, expected_names)
+                self.assertEqual(
+                    archive.read("qa-results.md").decode("utf-8"),
+                    "Pruebas focalizadas: OK.\n",
+                )
                 self.assertNotIn("SBM-SUITE/dp/DP-API/.env", names)
                 self.assertNotIn("SBM-SUITE/dp/DP-API/src/secret.py", names)
-                protected_full_contexts = {
-                    "SBM-SUITE/context/BUSINESS_CONTEXT.md",
-                    "SBM-SUITE/context/QA_CONTEXT.md",
-                    "SBM-SUITE/context/SYS_PROMPT.md",
-                    "SBM-SUITE/dp/DP-API/context/QA_CONTEXT.md",
-                    (
-                        "SBM-SUITE/dp/DP-API/context/"
-                        "DEPLOY_CONTEXT.md"
-                    ),
-                }
-                self.assertTrue(
-                    protected_full_contexts.isdisjoint(names)
-                )
+                self.assertNotIn("SBM-SUITE/context/SYS_PROMPT.md", names)
                 self.assertNotEqual(
                     archive.read("SBM-SUITE/context/PROJECT_CONTEXT.md"),
                     b"stale",
@@ -244,6 +370,33 @@ class ContextExportEndpointTests(unittest.TestCase):
 
                 manifest = json.loads(archive.read("manifest.json"))
                 self.assertEqual(manifest["project_name"], "dp-api")
+                self.assertEqual(len(manifest["contract_version"]), 64)
+                self.assertEqual(
+                    manifest["supported_patch_paths"],
+                    sorted(PATCH_DEFINITIONS),
+                )
+                self.assertEqual(
+                    manifest["canonical_project_path"],
+                    "/suite/dp/DP-API",
+                )
+                self.assertEqual(
+                    manifest["lifecycle_phase"],
+                    "implementation-progress",
+                )
+                self.assertEqual(manifest["objective_id"], "OBJ-001")
+                self.assertEqual(
+                    set(manifest["full_target_files"]),
+                    set(manifest["target_content_hashes"]),
+                )
+                self.assertEqual(
+                    set(manifest["full_target_files"]),
+                    set(manifest["target_section_hashes"]),
+                )
+                self.assertEqual(manifest["missing_full_target_files"], [])
+                self.assertNotIn(
+                    "FORMAT_CONTEXT.md",
+                    manifest["full_target_files"],
+                )
                 self.assertEqual(manifest["chunk_count"], 2)
                 self.assertEqual(
                     manifest["retrieved_chunk_count"],
@@ -328,12 +481,20 @@ class ContextExportEndpointTests(unittest.TestCase):
                     "FORMAT_CONTEXT.md",
                     "SBM-SUITE/context/PROJECT_CONTEXT.md",
                     "SBM-SUITE/context/README.md",
+                    "SBM-SUITE/context/COMPLETED_OBJECTIVES.md",
                     "SBM-SUITE/context/SUITE_CONTEXT.md",
+                    "SBM-SUITE/context/BUSINESS_CONTEXT.md",
+                    "SBM-SUITE/context/QA_CONTEXT.md",
+                    "SBM-SUITE/context/SECURITY_CONTEXT.md",
+                    "SBM-SUITE/context/DATA_CONTEXT.md",
+                    "SBM-SUITE/context/DECISIONS_CONTEXT.md",
                     (
                         "SBM-SUITE/dp/DP-API/context/"
                         "PROJECT_CONTEXT.md"
                     ),
                     "SBM-SUITE/dp/DP-API/README.md",
+                    "SBM-SUITE/dp/DP-API/context/QA_CONTEXT.md",
+                    "SBM-SUITE/dp/DP-API/context/DEPLOY_CONTEXT.md",
                 }
                 self.assertEqual(
                     {
@@ -409,6 +570,8 @@ class ContextExportEndpointTests(unittest.TestCase):
             request = ContextExportRequest(
                 project_name="dp-api",
                 workflow="context-deploy",
+                lifecycle_phase="implementation-progress",
+                objective_id="OBJ-001",
                 project_root=str(project_root),
                 source_context_root=str(suite_root),
                 format_context_path=str(
@@ -476,6 +639,8 @@ class ContextExportEndpointTests(unittest.TestCase):
             request = ContextExportRequest(
                 project_name="dp-api",
                 workflow="context-deploy",
+                lifecycle_phase="implementation-progress",
+                objective_id="OBJ-001",
                 project_root=str(project_root),
                 source_context_root=str(suite_root),
                 format_context_path=str(
@@ -501,6 +666,155 @@ class ContextExportEndpointTests(unittest.TestCase):
             ):
                 with self.assertRaises(Exception):
                     export_contexts(request)
+
+
+class ContextExportRequestTests(unittest.TestCase):
+    def _request(self, lifecycle_phase: str, user_prompt=None):
+        return ContextExportRequest(
+            project_name="dp-api",
+            workflow="context-deploy",
+            lifecycle_phase=lifecycle_phase,
+            objective_id="OBJ-001",
+            project_root="/suite/dp/DP-API",
+            source_context_root="/suite/context",
+            format_context_path="/suite/context/FORMAT_CONTEXT.md",
+            output_directory="/suite/context/output",
+            user_prompt=user_prompt,
+        )
+
+    def test_planning_without_user_prompt_is_rejected(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "user_prompt is required for planning-activation",
+        ):
+            self._request("planning-activation")
+
+    def test_planning_with_empty_user_prompt_is_rejected(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "user_prompt is required for planning-activation",
+        ):
+            self._request("planning-activation", "   ")
+
+    def test_planning_with_user_prompt_is_accepted(self):
+        request = self._request(
+            "planning-activation",
+            "Activate the requested objective.",
+        )
+
+        self.assertEqual(
+            request.user_prompt,
+            "Activate the requested objective.",
+        )
+
+    def test_progress_with_null_user_prompt_is_accepted(self):
+        request = self._request("implementation-progress", None)
+
+        self.assertIsNone(request.user_prompt)
+
+    def test_closure_with_null_user_prompt_is_accepted(self):
+        request = self._request("implementation-closure", None)
+
+        self.assertIsNone(request.user_prompt)
+
+    def test_closure_null_user_prompt_does_not_return_http_422(self):
+        app = FastAPI()
+        app.include_router(router)
+        response_payload = ContextExportResponse(
+            status="completed",
+            project_name="dp-api",
+            workflow="context-deploy",
+            lifecycle_phase="implementation-closure",
+            objective_id="OBJ-001",
+            context_zip_path="/suite/context/output/context-package.zip",
+            indexed_source_count=0,
+            chunk_count=0,
+            collection_name="sbm_contexts",
+            errors=[],
+        )
+
+        with patch(
+            "app.api.routes.contexts.export_contexts",
+            return_value=response_payload,
+        ):
+            response = TestClient(app).post(
+                "/contexts/export",
+                json=self._request(
+                    "implementation-closure",
+                    None,
+                ).model_dump(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["lifecycle_phase"],
+            "implementation-closure",
+        )
+        self.assertEqual(response.json()["objective_id"], "OBJ-001")
+
+
+class ContextContractMappingTests(unittest.TestCase):
+    def test_runtime_and_repository_paths_are_distinct_and_convertible(self):
+        self.assertEqual(canonical_projects()["dp-api"], "/suite/dp/DP-API")
+        self.assertEqual(
+            patch_target_file("patches/project-context.json", "dp-api"),
+            "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md",
+        )
+        self.assertEqual(
+            runtime_to_repository_path(
+                "/suite/dp/DP-API/context/PROJECT_CONTEXT.md"
+            ),
+            "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md",
+        )
+        self.assertEqual(
+            repository_to_runtime_path(
+                "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md"
+            ),
+            "/suite/dp/DP-API/context/PROJECT_CONTEXT.md",
+        )
+
+    def test_path_converters_reject_mixed_representations(self):
+        with self.assertRaises(ProjectRegistryError):
+            runtime_to_repository_path("SBM-SUITE/dp/DP-API")
+        with self.assertRaises(ProjectRegistryError):
+            repository_to_runtime_path("/suite/dp/DP-API")
+
+    def test_all_canonical_projects_use_runtime_paths(self):
+        self.assertEqual(
+            canonical_projects(),
+            {
+                "dp-api": "/suite/dp/DP-API",
+                "sbm-ai-assistant": "/suite/sbm/sbm-ai-assistant",
+                "sbm-api": "/suite/sbm/SBM-API",
+            },
+        )
+
+    def test_concrete_dp_api_project_mappings_are_accepted(self):
+        validate_format_context(_valid_format_contract("dp-api"))
+
+    def test_concrete_sbm_api_project_mappings_are_accepted(self):
+        validate_format_context(_valid_format_contract("sbm-api"))
+
+    def test_concrete_sbm_ai_assistant_project_mappings_are_accepted(self):
+        validate_format_context(_valid_format_contract("sbm-ai-assistant"))
+
+    def test_incorrect_project_mapping_is_rejected(self):
+        contract = _valid_format_contract("dp-api").replace(
+            "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md",
+            "SBM-SUITE/dp/WRONG/context/PROJECT_CONTEXT.md",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "patch mapping diverges from backend",
+        ):
+            validate_format_context(contract)
+
+    def test_internal_placeholders_are_resolved_before_comparison(self):
+        definition = PATCH_DEFINITIONS["patches/project-context.json"]
+        self.assertIn("{project}", definition.target_template)
+
+        validate_format_context(_valid_format_contract("dp-api"))
 
 
 class ContextPathValidationTests(unittest.TestCase):
@@ -709,6 +1023,7 @@ class ContextRetrievalTests(unittest.TestCase):
                 "project_name": "dp-api",
                 "workflow": "context-deploy",
                 "is_active": True,
+                "project_path": "dp/DP-API",
             },
         )
         self.assertEqual(
@@ -729,6 +1044,50 @@ class ContextRetrievalTests(unittest.TestCase):
 
 
 class ContextIndexTests(unittest.TestCase):
+    def test_obsolete_dp_paths_are_deactivated(self):
+        source = ContextSource(
+            source_path=Path("/suite/dp/DP-API/README.md"),
+            archive_path="SBM-SUITE/dp/DP-API/README.md",
+            context_type="project_readme",
+            repository="DP-API",
+            legacy_source_path="dp/DP-API/README.md",
+        )
+        obsolete_points = [SimpleNamespace(id="obsolete-point")]
+
+        with (
+            patch(
+                "app.services.contexts.context_index_service."
+                "scroll_all_points",
+                return_value=obsolete_points,
+            ) as scroll_mock,
+            patch(
+                "app.services.contexts.context_index_service."
+                "deactivate_points",
+            ) as deactivate_mock,
+        ):
+            _deactivate_obsolete_path_points(source, "dp-api")
+
+        filtered_paths = {
+            condition.key: condition.match.value
+            for call in scroll_mock.call_args_list
+            for condition in call.kwargs["scroll_filter"].must
+            if condition.key in {"source_path", "archive_path"}
+        }
+        self.assertEqual(
+            filtered_paths,
+            {
+                "source_path": "/suite/DP-API/README.md",
+                "archive_path": "SBM-SUITE/dp-api/README.md",
+            },
+        )
+        self.assertEqual(deactivate_mock.call_count, 2)
+        self.assertTrue(
+            all(
+                call.kwargs["point_ids"] == ["obsolete-point"]
+                for call in deactivate_mock.call_args_list
+            )
+        )
+
     def test_embeddings_are_generated_in_one_batch_per_source(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             source_path = Path(temporary_directory) / "README.md"
@@ -1103,7 +1462,7 @@ class ContextIndexTests(unittest.TestCase):
 
 
 class ContextApplicationTests(unittest.TestCase):
-    def test_missing_allowlisted_files_are_reported_without_exporting_others(self):
+    def test_missing_mandatory_full_target_blocks_export(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             suite_root = Path(temporary_directory) / "SBM-SUITE"
             project_root = suite_root / "dp" / "DP-API"
@@ -1117,6 +1476,8 @@ class ContextApplicationTests(unittest.TestCase):
             request = ContextExportRequest(
                 project_name="dp-api",
                 workflow="context-deploy",
+                lifecycle_phase="implementation-progress",
+                objective_id="OBJ-001",
                 project_root=str(project_root),
                 source_context_root=str(suite_root),
                 format_context_path=str(
@@ -1139,42 +1500,11 @@ class ContextApplicationTests(unittest.TestCase):
                     return_value=[],
                 ),
             ):
-                response = export_contexts(request)
-
-            self.assertEqual(response.indexed_source_count, 3)
-            self.assertEqual(len(response.errors), 11)
-            self.assertIn(
-                "Missing authorized full context file: "
-                "SBM-SUITE/context/PROJECT_CONTEXT.md",
-                response.errors,
-            )
-
-            with ZipFile(response.context_zip_path) as archive:
-                names = set(archive.namelist())
-                self.assertIn("SBM-SUITE/context/README.md", names)
-                self.assertIn("SBM-SUITE/dp/DP-API/README.md", names)
-                self.assertNotIn(
-                    "SBM-SUITE/context/PROJECT_CONTEXT.md",
-                    names,
-                )
-                self.assertNotIn(
-                    "SBM-SUITE/context/SUITE_CONTEXT.md",
-                    names,
-                )
-                manifest = json.loads(
-                    archive.read("manifest.json")
-                )
-                self.assertEqual(
-                    set(manifest["missing_full_context_files"]),
-                    {
-                        "SBM-SUITE/context/PROJECT_CONTEXT.md",
-                        "SBM-SUITE/context/SUITE_CONTEXT.md",
-                        (
-                            "SBM-SUITE/dp/DP-API/context/"
-                            "PROJECT_CONTEXT.md"
-                        ),
-                    },
-                )
+                with self.assertRaisesRegex(
+                    ContextValidationError,
+                    "Missing mandatory full target files",
+                ):
+                    export_contexts(request)
 
 
 class ProjectAllowlistTests(unittest.TestCase):

@@ -113,12 +113,6 @@ def _scroll_source_points(
 ) -> list:
     source_paths = [str(source.source_path)]
 
-    if (
-        source.legacy_source_path
-        and source.legacy_source_path not in source_paths
-    ):
-        source_paths.append(source.legacy_source_path)
-
     points_by_id = {}
 
     for source_path in source_paths:
@@ -135,6 +129,57 @@ def _scroll_source_points(
             points_by_id[str(point.id)] = point
 
     return list(points_by_id.values())
+
+
+def _deactivate_obsolete_path_points(
+    source: ContextSource,
+    project_name: str,
+) -> None:
+    if project_name != "dp-api":
+        return
+    canonical_source = str(source.source_path)
+    if not canonical_source.startswith("/suite/dp/DP-API"):
+        return
+    obsolete_paths = {
+        (
+            "source_path",
+            canonical_source.replace("/suite/dp/DP-API", "/suite/DP-API", 1),
+        ),
+    }
+    if source.archive_path.startswith("SBM-SUITE/dp/DP-API"):
+        obsolete_paths.add(
+            (
+                "archive_path",
+                source.archive_path.replace(
+                "SBM-SUITE/dp/DP-API",
+                "SBM-SUITE/dp-api",
+                1,
+                ),
+            )
+        )
+    for payload_key, obsolete_path in sorted(obsolete_paths):
+        obsolete_filter = _source_filter(
+            project_name,
+            obsolete_path,
+            active_only=True,
+        )
+        obsolete_filter.must = [
+            condition
+            if getattr(condition, "key", None) != "source_path"
+            else FieldCondition(
+                key=payload_key,
+                match=MatchValue(value=obsolete_path),
+            )
+            for condition in obsolete_filter.must
+        ]
+        points = scroll_all_points(
+            scroll_filter=obsolete_filter,
+            collection_name=CONTEXT_COLLECTION_NAME,
+        )
+        deactivate_points(
+            point_ids=[point.id for point in points],
+            collection_name=CONTEXT_COLLECTION_NAME,
+        )
 
 
 def _points_match_unchanged_content(
@@ -184,8 +229,7 @@ def index_context_source(
         _point_id(
             project_name=project_name,
             source_path=(
-                source.legacy_source_path
-                or str(source.source_path)
+                str(source.source_path)
             ),
             source_hash=source_hash,
             chunk=chunk,
@@ -248,6 +292,7 @@ def index_context_source(
                 source.source_path,
                 len(chunks),
             )
+            _deactivate_obsolete_path_points(source, project_name)
             return len(chunks)
 
     embedding_started_at = time.monotonic()
@@ -359,6 +404,7 @@ def index_context_source(
         point_ids=obsolete_ids,
         collection_name=CONTEXT_COLLECTION_NAME,
     )
+    _deactivate_obsolete_path_points(source, project_name)
     logger.info(
         "[CONTEXT_EXPORT] obsolete chunk deactivation complete "
         "source=%s points=%d",

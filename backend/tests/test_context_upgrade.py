@@ -14,6 +14,13 @@ from app.services.contexts.context_upgrade_service import (
     ContextUpgradeOperationalError,
     upgrade_contexts,
 )
+from app.services.contexts.contract_registry import (
+    PATCH_DEFINITIONS,
+    build_contract_version,
+    canonical_project_path,
+    patch_target_file,
+    supported_patch_paths,
+)
 from app.services.contexts.file_discovery_service import ContextValidationError
 
 
@@ -21,31 +28,63 @@ GLOBAL_PROJECT_PATCH = "patches/global-project-context.json"
 SUITE_CONTEXT_PATCH = "patches/suite-context.json"
 PROJECT_CONTEXT_PATCH = "patches/project-context.json"
 PROJECT_README_PATCH = "patches/project-readme.json"
+COMPLETED_OBJECTIVES_PATCH = "patches/completed-objectives.json"
+GLOBAL_QA_PATCH = "patches/global-qa-context.json"
+PROJECT_QA_PATCH = "patches/project-qa-context.json"
 
 GLOBAL_PROJECT = "SBM-SUITE/context/PROJECT_CONTEXT.md"
 SUITE_CONTEXT = "SBM-SUITE/context/SUITE_CONTEXT.md"
 PROJECT_CONTEXT = "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md"
 PROJECT_README = "SBM-SUITE/dp/DP-API/README.md"
+COMPLETED_OBJECTIVES = "SBM-SUITE/context/COMPLETED_OBJECTIVES.md"
+GLOBAL_QA = "SBM-SUITE/context/QA_CONTEXT.md"
+PROJECT_QA = "SBM-SUITE/dp/DP-API/context/QA_CONTEXT.md"
 
 EXECUTIVE_README = "EXECUTIVE_README.md"
 COMMIT_MESSAGE = "COMMIT_MESSAGE.md"
 USER_PROMPT = "USER_PROMPT.md"
 
+COMPLETED_TABLE_HEADER = (
+    "| Objective ID | Project | Objective | Final status | Priority | Branch | "
+    "Started | Completed | Summary | Validation | Documentation | Proposed commit |"
+)
+COMPLETED_TABLE_SEPARATOR = (
+    "|---|---|---|---|---:|---|---|---|---|---|---|---|"
+)
+
 
 FORMAT_CONTRACT = """# FORMAT_CONTEXT.md
+
+## 1. Global rules
+
+Canonical backend contract.
+
+---
 
 ## 2. Global `PROJECT_CONTEXT.md`
 
 ```text
 # PROJECT_CONTEXT.md
 ## 1. Executive summary
-## 2. Current suite objective
-## 3. Document boundary
+## 2. Suite purpose
+## 3. Active objectives
+## 4. Pending objectives
+## 5. Document boundary
 ```
 
 ---
 
-## 3. Global `SUITE_CONTEXT.md`
+## 3. Global `COMPLETED_OBJECTIVES.md`
+
+```text
+# COMPLETED_OBJECTIVES.md
+## 1. Completed objectives by project
+## 2. Document boundary
+```
+
+---
+
+## 4. Global `SUITE_CONTEXT.md`
 
 ```text
 # SUITE_CONTEXT.md
@@ -56,18 +95,100 @@ FORMAT_CONTRACT = """# FORMAT_CONTEXT.md
 
 ---
 
-## 10. Project `context/PROJECT_CONTEXT.md`
+## 5. Global `BUSINESS_CONTEXT.md`
 
 ```text
-# PROJECT_CONTEXT.md
-## 1. Executive summary
-## 2. Project purpose
+# BUSINESS_CONTEXT.md
+## 1. Business overview
+## 2. Document boundary
+```
+
+---
+
+## 6. Global `QA_CONTEXT.md`
+
+```text
+# QA_CONTEXT.md
+## 1. QA strategy
+## 2. Project QA summaries
 ## 3. Document boundary
 ```
 
 ---
 
-## 13. Project and suite `README.md`
+## 7. Global `SECURITY_CONTEXT.md`
+
+```text
+# SECURITY_CONTEXT.md
+## 1. Security objectives
+## 2. Document boundary
+```
+
+---
+
+## 8. Global `DATA_CONTEXT.md`
+
+```text
+# DATA_CONTEXT.md
+## 1. Data architecture overview
+## 2. Document boundary
+```
+
+---
+
+## 9. Global `DECISIONS_CONTEXT.md`
+
+```text
+# DECISIONS_CONTEXT.md
+## 1. Decision governance
+## 2. Document boundary
+```
+
+---
+
+## 10. Global `SYS_PROMPT.md`
+
+Protected.
+
+---
+
+## 11. Project `context/PROJECT_CONTEXT.md`
+
+```text
+# PROJECT_CONTEXT.md
+## 1. Executive summary
+## 2. Project purpose
+## 3. Active objectives
+## 4. Pending objectives
+## 5. Document boundary
+```
+
+---
+
+## 12. Project `context/QA_CONTEXT.md`
+
+```text
+# QA_CONTEXT.md
+## 1. QA strategy
+## 2. Current validated evidence
+## 3. Document boundary
+```
+
+---
+
+## 13. Project `context/DEPLOY_CONTEXT.md`
+
+```text
+# DEPLOY_CONTEXT.md
+## 1. Deployment overview
+## 2. Document boundary
+```
+
+---
+
+## 14. Project and suite `README.md`
+
+README headings are repository-owned.
 
 ```text
 # README.md
@@ -76,8 +197,13 @@ FORMAT_CONTRACT = """# FORMAT_CONTEXT.md
 ## 3. Document boundary
 ```
 
----
-"""
+### Output patch mappings
+
+""" + "\n\n".join(
+    f"{path}\n→ "
+    + patch_target_file(path, "dp-api")
+    for path, definition in PATCH_DEFINITIONS.items()
+) + "\n"
 
 
 def _write(path: Path, content: str) -> None:
@@ -144,11 +270,29 @@ class UpgradeEnvironment:
         _write(self.suite_root / "FORMAT_CONTEXT.md", FORMAT_CONTRACT)
         _write(
             self.suite_root / "PROJECT_CONTEXT.md",
-            _document(
-                "PROJECT_CONTEXT.md",
-                "## 1. Executive summary",
-                "## 2. Current suite objective",
-            ),
+            "# PROJECT_CONTEXT.md\n\n"
+            "## 1. Executive summary\n\nOld summary.\n\n"
+            "## 2. Suite purpose\n\nOld purpose.\n\n"
+            "## 3. Active objectives\n\n"
+            "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+            "|---|---|---|---|---:|---|---|---|\n\n"
+            "## 4. Pending objectives\n\n"
+            "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+            "|---|---|---|---|---:|---|---|---|\n\n"
+            "## 5. Document boundary\n\nBoundary.\n",
+        )
+        _write(
+            self.suite_root / "COMPLETED_OBJECTIVES.md",
+            "# COMPLETED_OBJECTIVES.md\n\n"
+            "## 1. Completed objectives by project\n\n"
+            "No completed objectives have been migrated into this register yet.\n\n"
+            "The following fenced example is documentation, not a real group:\n\n"
+            "```text\n"
+            "### <project>\n\n"
+            f"{COMPLETED_TABLE_HEADER}\n"
+            f"{COMPLETED_TABLE_SEPARATOR}\n"
+            "```\n\n"
+            "## 2. Document boundary\n\nBoundary.\n",
         )
         _write(
             self.suite_root / "SUITE_CONTEXT.md",
@@ -159,20 +303,48 @@ class UpgradeEnvironment:
             ),
         )
         _write(
+            self.suite_root / "QA_CONTEXT.md",
+            "# QA_CONTEXT.md\n\n"
+            "## 1. QA strategy\n\nValidated QA.\n\n"
+            "## 2. Project QA summaries\n\n"
+            "| Project | Status | Evidence |\n"
+            "|---|---|---|\n"
+            "| SBM-API | passing | existing |\n\n"
+            "## 3. Document boundary\n\nBoundary.\n",
+        )
+        _write(
             self.project_root / "context/PROJECT_CONTEXT.md",
-            _document(
-                "PROJECT_CONTEXT.md",
-                "## 1. Executive summary",
-                "## 2. Project purpose",
-            ),
+            "# PROJECT_CONTEXT.md\n\n"
+            "## 1. Executive summary\n\nOld summary.\n\n"
+            "## 2. Project purpose\n\nOld purpose.\n\n"
+            "## 3. Active objectives\n\n"
+            "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+            "|---|---|---|---:|---|---|---|\n\n"
+            "## 4. Pending objectives\n\n"
+            "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+            "|---|---|---|---:|---|---|---|\n\n"
+            "## 5. Document boundary\n\nBoundary.\n",
         )
         _write(
             self.project_root / "README.md",
-            _document(
-                "README.md",
-                "## Overview",
-                "## Reusable components",
-            ),
+            "# README.md\n\n"
+            "## Overview\n\nOld first section.\n\n"
+            "## Reusable components\n\n"
+            "| File name | Path | Description |\n"
+            "|---|---|---|\n"
+            "| existing-service.py | backend/app/services/ | Existing service |\n"
+            "| existing-model.py | backend/app/models/ | Existing model |\n\n"
+            "## 3. Document boundary\n\nBoundary.\n",
+        )
+        _write(
+            self.project_root / "context/QA_CONTEXT.md",
+            "# QA_CONTEXT.md\n\n"
+            "## 1. QA strategy\n\nValidated QA.\n\n"
+            "## 2. Current validated evidence\n\n"
+            "| Test | Result | Evidence |\n"
+            "|---|---|---|\n"
+            "| Existing | passed | baseline |\n\n"
+            "## 3. Document boundary\n\nBoundary.\n",
         )
 
     @property
@@ -197,6 +369,8 @@ def _create_upgrade_zip(
     user_prompt: str | None = None,
     manifest_updates: dict | None = None,
     project_name: str = "dp-api",
+    lifecycle_phase: str = "implementation-progress",
+    objective_id: str | None = "OBJ-001",
 ) -> None:
     files = {
         EXECUTIVE_README: "Context upgrade summary\n",
@@ -209,6 +383,13 @@ def _create_upgrade_zip(
     manifest = {
         "project_name": project_name,
         "workflow": "context-upgrade",
+        "contract_version": build_contract_version(
+            (path.parent.parent / "FORMAT_CONTEXT.md").read_text(encoding="utf-8")
+        ),
+        "supported_patch_paths": supported_patch_paths(),
+        "canonical_project_path": canonical_project_path(project_name),
+        "lifecycle_phase": lifecycle_phase,
+        "objective_id": objective_id,
         "execution_mode": execution_mode,
         "user_prompt_file": USER_PROMPT if user_prompt is not None else None,
         "output_filename": "context-upgrade.zip",
@@ -225,6 +406,7 @@ def _create_upgrade_zip(
             "message_file": COMMIT_MESSAGE,
         },
         "rag": {"retrieved_chunk_count": 3},
+        "qa": {"status": "passed"},
     }
     if manifest_updates:
         manifest.update(manifest_updates)
@@ -235,20 +417,485 @@ def _create_upgrade_zip(
         archive.writestr("manifest.json", json.dumps(manifest))
 
 
+def _seed_active_objectives(
+    env: UpgradeEnvironment,
+    objective_ids: tuple[str, ...] = ("OBJ-001",),
+) -> None:
+    global_rows = "".join(
+        f"| {objective_id} | DP-API | Objective {objective_id} | active | 5 |  | FEATURE-{objective_id.casefold()} | N/A |\n"
+        for objective_id in objective_ids
+    )
+    project_rows = "".join(
+        f"| {objective_id} | Objective {objective_id} | active | 5 |  | FEATURE-{objective_id.casefold()} | N/A |\n"
+        for objective_id in objective_ids
+    )
+    global_path = env.suite_root / "PROJECT_CONTEXT.md"
+    project_path = env.project_root / "context/PROJECT_CONTEXT.md"
+    global_path.write_text(
+        global_path.read_text(encoding="utf-8").replace(
+            "|---|---|---|---|---:|---|---|---|\n\n",
+            "|---|---|---|---|---:|---|---|---|\n" + global_rows + "\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8").replace(
+            "|---|---|---|---:|---|---|---|\n\n",
+            "|---|---|---|---:|---|---|---|\n" + project_rows + "\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _completed_row(
+    objective_id: str = "OBJ-001",
+    objective: str | None = None,
+) -> str:
+    objective_text = objective or f"Objective {objective_id}"
+    return (
+        f"| {objective_id} | DP-API | {objective_text} | completed | 5 | "
+        f"FEATURE-{objective_id.casefold()} | 2026-08-02 | 2026-08-02 | "
+        "Completed | QA passed | N/A | feat: close |"
+    )
+
+
+def _completed_project_group(row: str) -> str:
+    return (
+        "### DP-API\n\n"
+        f"{COMPLETED_TABLE_HEADER}\n"
+        f"{COMPLETED_TABLE_SEPARATOR}\n"
+        f"{row}"
+    )
+
+
+def _seed_completed_project_group(
+    env: UpgradeEnvironment,
+    rows: tuple[str, ...] = (),
+) -> None:
+    completed = env.suite_root / "COMPLETED_OBJECTIVES.md"
+    markdown = completed.read_text(encoding="utf-8")
+    markdown = markdown.replace(
+        "No completed objectives have been migrated into this register yet.\n\n",
+        "",
+        1,
+    )
+    group_rows = "".join(f"{row}\n" for row in rows)
+    group = (
+        "### DP-API\n\n"
+        f"{COMPLETED_TABLE_HEADER}\n"
+        f"{COMPLETED_TABLE_SEPARATOR}\n"
+        f"{group_rows}\n"
+    )
+    markdown = markdown.replace(
+        "## 2. Document boundary",
+        group + "## 2. Document boundary",
+        1,
+    )
+    completed.write_text(markdown, encoding="utf-8")
+
+
+def _completed_replace_patch(env: UpgradeEnvironment, row: str) -> str:
+    markdown = (env.suite_root / "COMPLETED_OBJECTIVES.md").read_text(
+        encoding="utf-8"
+    )
+    start = markdown.index("## 1. Completed objectives by project")
+    end = markdown.index("## 2. Document boundary")
+    section = markdown[start:end].rstrip()
+    prefix, group = section.split("### DP-API", 1)
+    separator = COMPLETED_TABLE_SEPARATOR + "\n"
+    if separator not in group:
+        raise AssertionError("Missing completed objectives table separator")
+    group = group.replace(separator, separator + row + "\n", 1)
+    replacement = prefix + "### DP-API" + group
+    return _replace_patch(
+        COMPLETED_OBJECTIVES,
+        "## 1. Completed objectives by project",
+        replacement,
+    )
+
+
+def _closure_patches() -> dict[str, str]:
+    completed_row = _completed_row()
+    return {
+        GLOBAL_PROJECT_PATCH: _replace_patch(
+            GLOBAL_PROJECT,
+            "## 3. Active objectives",
+            "## 3. Active objectives\n\n"
+            "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+            "|---|---|---|---|---:|---|---|---|\n",
+        ),
+        PROJECT_CONTEXT_PATCH: _replace_patch(
+            PROJECT_CONTEXT,
+            "## 3. Active objectives",
+            "## 3. Active objectives\n\n"
+            "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+            "|---|---|---|---:|---|---|---|\n",
+        ),
+        COMPLETED_OBJECTIVES_PATCH: _append_patch(
+            COMPLETED_OBJECTIVES,
+            "## 1. Completed objectives by project",
+            _completed_project_group(completed_row),
+        ),
+        GLOBAL_QA_PATCH: _replace_patch(
+            GLOBAL_QA,
+            "## 1. QA strategy",
+            "## 1. QA strategy\n\nValidated closure QA.\n",
+        ),
+        PROJECT_QA_PATCH: _replace_patch(
+            PROJECT_QA,
+            "## 1. QA strategy",
+            "## 1. QA strategy\n\nValidated closure QA.\n",
+        ),
+    }
+
+
 class ContextUpgradeTests(unittest.TestCase):
+    def test_contract_version_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Suite purpose",
+                        "## 2. Suite purpose\n\nUpdated.\n",
+                    )
+                },
+                manifest_updates={"contract_version": "0" * 64},
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "contract_version does not match",
+            ):
+                env.run()
+
+    def test_format_context_backend_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 2. Suite purpose",
+                        "## 2. Suite purpose\n\nUpdated.\n",
+                    )
+                },
+            )
+            format_path = env.suite_root / "FORMAT_CONTEXT.md"
+            format_path.write_text(
+                format_path.read_text(encoding="utf-8").replace(
+                    "## 14. Project and suite `README.md`",
+                    "## 13. Project and suite `README.md`",
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "unique and sequential",
+            ):
+                env.run()
+
+    def test_missing_lifecycle_phase_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+                manifest_updates={"lifecycle_phase": None},
+            )
+            with self.assertRaisesRegex(ContextValidationError, "is required"):
+                env.run()
+
+    def test_invalid_lifecycle_phase_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+                manifest_updates={"lifecycle_phase": "finished"},
+            )
+            with self.assertRaisesRegex(ContextValidationError, "not supported"):
+                env.run()
+
+    def test_closure_without_objective_id_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+                objective_id=None,
+            )
+            with self.assertRaisesRegex(ContextValidationError, "objective_id"):
+                env.run()
+
+    def test_closure_without_completed_patch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patches = _closure_patches()
+            patches.pop(COMPLETED_OBJECTIVES_PATCH)
+            _create_upgrade_zip(
+                env.zip_path,
+                patches,
+                lifecycle_phase="implementation-closure",
+            )
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "missing required patches",
+            ):
+                env.run()
+
+    def test_closure_without_qa_manifest_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+                manifest_updates={"qa": None},
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "implementation-closure requires successful QA",
+            ):
+                env.run()
+
+    def test_closure_with_failed_qa_manifest_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+                manifest_updates={"qa": {"status": "failed"}},
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "implementation-closure requires successful QA",
+            ):
+                env.run()
+
+    def test_closure_with_successful_qa_manifest_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+                manifest_updates={"qa": {"status": "passed"}},
+            )
+
+            response = env.run()
+
+            self.assertEqual(response.project_name, "dp-api")
+            self.assertTrue(response.input_cleaned)
+
+    def test_planning_with_completed_patch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {COMPLETED_OBJECTIVES_PATCH: _closure_patches()[COMPLETED_OBJECTIVES_PATCH]},
+                execution_mode="user-guided",
+                user_prompt="Plan objective.",
+                lifecycle_phase="planning-activation",
+            )
+            with self.assertRaises(ContextValidationError):
+                env.run()
+
+    def test_progress_with_completed_patch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {COMPLETED_OBJECTIVES_PATCH: _closure_patches()[COMPLETED_OBJECTIVES_PATCH]},
+            )
+            with self.assertRaises(ContextValidationError):
+                env.run()
+    def test_manifest_contract_accepts_manifest_only_in_allowed_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nContract-compliant update.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+            )
+
+            response = env.run()
+
+            self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
+
+    def test_manifest_contract_rejects_manifest_missing_from_allowed_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+                manifest_updates={
+                    "allowed_files": [
+                        EXECUTIVE_README,
+                        COMMIT_MESSAGE,
+                        GLOBAL_PROJECT_PATCH,
+                    ]
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "allowed_files must include manifest.json",
+            ):
+                env.run()
+
+    def test_manifest_contract_rejects_manifest_in_updated_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+                manifest_updates={
+                    "updated_files": [
+                        EXECUTIVE_README,
+                        COMMIT_MESSAGE,
+                        GLOBAL_PROJECT_PATCH,
+                        "manifest.json",
+                    ]
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "updated_files must not include manifest.json",
+            ):
+                env.run()
+
+    def test_manifest_contract_rejects_manifest_in_content_hashes(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
+            )
+            content_hashes = {
+                EXECUTIVE_README: hashlib.sha256(
+                    b"Context upgrade summary\n"
+                ).hexdigest(),
+                COMMIT_MESSAGE: hashlib.sha256(
+                    b"docs(contexts): update project context\n"
+                ).hexdigest(),
+                GLOBAL_PROJECT_PATCH: hashlib.sha256(
+                    patch_content.encode("utf-8")
+                ).hexdigest(),
+                "manifest.json": "0" * 64,
+            }
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+                manifest_updates={"content_hashes": content_hashes},
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "content_hashes must not include manifest.json",
+            ):
+                env.run()
+
+    def test_manifest_contract_rejects_updated_files_not_matching_zip(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+                manifest_updates={
+                    "updated_files": [EXECUTIVE_README, COMMIT_MESSAGE]
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "updated_files must match non-manifest ZIP files",
+            ):
+                env.run()
+
+    def test_manifest_contract_rejects_hash_keys_not_matching_updated_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            patch_content = _replace_patch(
+                GLOBAL_PROJECT,
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
+            )
+            content_hashes = {
+                EXECUTIVE_README: hashlib.sha256(
+                    b"Context upgrade summary\n"
+                ).hexdigest(),
+                GLOBAL_PROJECT_PATCH: hashlib.sha256(
+                    patch_content.encode("utf-8")
+                ).hexdigest(),
+            }
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patch_content},
+                manifest_updates={"content_hashes": content_hashes},
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "content_hashes keys must match manifest.updated_files",
+            ):
+                env.run()
+
     def test_valid_global_patch_creates_backup_applies_and_cleans_input(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
             target = env.suite_root / "PROJECT_CONTEXT.md"
             old_mode = stat.S_IMODE(target.stat().st_mode)
 
-            patch_content = "## 2. Current suite objective\n\n" "New suite objective.\n"
+            patch_content = "## 2. Suite purpose\n\n" "New suite purpose.\n"
             _create_upgrade_zip(
                 env.zip_path,
                 {
                     GLOBAL_PROJECT_PATCH: _replace_patch(
                         GLOBAL_PROJECT,
-                        "## 2. Current suite objective",
+                        "## 2. Suite purpose",
                         patch_content,
                     )
                 },
@@ -261,7 +908,7 @@ class ContextUpgradeTests(unittest.TestCase):
             self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
             self.assertTrue(response.input_cleaned)
             self.assertFalse(env.zip_path.exists())
-            self.assertIn("New suite objective.", target.read_text(encoding="utf-8"))
+            self.assertIn("New suite purpose.", target.read_text(encoding="utf-8"))
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), old_mode)
 
             backup = Path(response.backup_directory)
@@ -276,7 +923,7 @@ class ContextUpgradeTests(unittest.TestCase):
             self.assertEqual(backup_manifest["project_name"], "dp-api")
             self.assertEqual(backup_manifest["workflow"], "context-upgrade")
             self.assertEqual(
-                [item["archive_path"] for item in backup_manifest["backed_up_files"]],
+                [item["original_path"] for item in backup_manifest["backed_up_files"]],
                 [GLOBAL_PROJECT],
             )
             self.assertFalse((env.suite_root / "backups").exists())
@@ -325,7 +972,10 @@ class ContextUpgradeTests(unittest.TestCase):
                         PROJECT_README,
                         "## Reusable components",
                         "## Reusable components\n\n| File name | Path | Description |\n"
-                        "|---|---|---|\n| registry | services/ | allowlist |\n",
+                        "|---|---|---|\n"
+                        "| existing-service.py | backend/app/services/ | Existing service |\n"
+                        "| existing-model.py | backend/app/models/ | Existing model |\n"
+                        "| registry | services/ | allowlist |\n",
                     )
                 },
             )
@@ -409,7 +1059,7 @@ class ContextUpgradeTests(unittest.TestCase):
                 sorted([GLOBAL_PROJECT, SUITE_CONTEXT]),
             )
 
-    def test_append_to_section_is_supported(self):
+    def test_append_to_current_section_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
             _create_upgrade_zip(
@@ -417,18 +1067,17 @@ class ContextUpgradeTests(unittest.TestCase):
                 {
                     GLOBAL_PROJECT_PATCH: _append_patch(
                         GLOBAL_PROJECT,
-                        "## 2. Current suite objective",
-                        "Additional validated detail.",
+                        "## 2. Suite purpose",
+                        "Additional validated suite detail.",
                     )
                 },
             )
 
-            env.run()
-
-            self.assertIn(
-                "Additional validated detail.",
-                (env.suite_root / "PROJECT_CONTEXT.md").read_text(encoding="utf-8"),
-            )
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "operation forbidden by PATCH_DEFINITIONS",
+            ):
+                env.run()
 
     def test_user_guided_zip_accepts_and_backs_up_prompt(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -454,6 +1103,329 @@ class ContextUpgradeTests(unittest.TestCase):
                 "Actualizar el propósito del proyecto.",
             )
 
+    def test_planning_activation_requires_global_and_project_objective_patches(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 3. Active objectives",
+                        "## 3. Active objectives\n\n"
+                        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | Enable Material | active | 5 |  | FEATURE-enable-material | N/A |\n",
+                    )
+                },
+                execution_mode="user-guided",
+                user_prompt="Agregar el módulo Material en DP-API.",
+                lifecycle_phase="planning-activation",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "require both global-project-context.json and project-context.json",
+            ):
+                env.run()
+
+    def test_planning_activation_updates_global_and_project_contexts(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 3. Active objectives",
+                        "## 3. Active objectives\n\n"
+                        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | DP-API | Enable Material | active | 5 |  | FEATURE-enable-material | N/A |\n",
+                    ),
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 3. Active objectives",
+                        "## 3. Active objectives\n\n"
+                        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | Enable Material | active | 5 |  | FEATURE-enable-material | N/A |\n",
+                    ),
+                },
+                execution_mode="user-guided",
+                user_prompt="Agregar el módulo Material en DP-API.",
+                lifecycle_phase="planning-activation",
+            )
+
+            response = env.run()
+
+            self.assertEqual(
+                response.updated_files,
+                sorted([GLOBAL_PROJECT, PROJECT_CONTEXT]),
+            )
+            self.assertIn(
+                "FEATURE-enable-material",
+                (env.suite_root / "PROJECT_CONTEXT.md").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "FEATURE-enable-material",
+                (env.project_root / "context/PROJECT_CONTEXT.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+
+    def test_completed_objective_requires_global_and_project_context_patches(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    COMPLETED_OBJECTIVES_PATCH: _append_patch(
+                        COMPLETED_OBJECTIVES,
+                        "## 1. Completed objectives by project",
+                        "### DP-API\n\nCompleted objective record.",
+                    )
+                },
+                lifecycle_phase="implementation-closure",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "implementation-closure is missing required patches",
+            ):
+                env.run()
+
+    def test_missing_completed_project_group_rejects_replace_section(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            patches = _closure_patches()
+            patches[COMPLETED_OBJECTIVES_PATCH] = _replace_patch(
+                COMPLETED_OBJECTIVES,
+                "## 1. Completed objectives by project",
+                "## 1. Completed objectives by project\n\nInvalid replacement.\n",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                patches,
+                lifecycle_phase="implementation-closure",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "missing completed-objectives project group requires append_to_section",
+            ):
+                env.run()
+
+    def test_completed_objective_closure_updates_history_and_operational_contexts(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+            )
+
+            response = env.run()
+
+            self.assertEqual(
+                response.updated_files,
+                sorted(
+                    [
+                        GLOBAL_PROJECT,
+                        PROJECT_CONTEXT,
+                        COMPLETED_OBJECTIVES,
+                        GLOBAL_QA,
+                        PROJECT_QA,
+                    ]
+                ),
+            )
+            history = (env.suite_root / "COMPLETED_OBJECTIVES.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("### DP-API", history)
+            self.assertIn("OBJ-001", history)
+            self.assertNotIn(
+                "No completed objectives have been migrated into this register yet.",
+                history,
+            )
+
+    def test_existing_completed_project_group_rejects_append(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            _seed_completed_project_group(
+                env,
+                (_completed_row("OLD-001", "Existing objective"),),
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "existing completed-objectives project group requires replace_section",
+            ):
+                env.run()
+
+    def test_existing_completed_project_group_accepts_complete_replace(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            existing_row = _completed_row("OLD-001", "Existing objective")
+            _seed_completed_project_group(env, (existing_row,))
+            patches = _closure_patches()
+            patches[COMPLETED_OBJECTIVES_PATCH] = _completed_replace_patch(
+                env,
+                _completed_row(),
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                patches,
+                lifecycle_phase="implementation-closure",
+            )
+
+            env.run()
+
+            history = (env.suite_root / "COMPLETED_OBJECTIVES.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(history.count("### DP-API"), 1)
+            self.assertIn("OLD-001", history)
+            self.assertIn("OBJ-001", history)
+
+    def test_closure_cannot_remove_another_objective(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env, ("OBJ-001", "OBJ-002"))
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "objective other than OBJ-001|unrelated table row",
+            ):
+                env.run()
+
+    def test_global_qa_cannot_remove_another_project(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_QA_PATCH: _replace_patch(
+                        GLOBAL_QA,
+                        "## 2. Project QA summaries",
+                        "## 2. Project QA summaries\n\n"
+                        "| Project | Status | Evidence |\n"
+                        "|---|---|---|\n"
+                        "| DP-API | passing | current |\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "unrelated table row",
+            ):
+                env.run()
+
+    def test_partial_global_qa_table_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_QA_PATCH: _replace_patch(
+                        GLOBAL_QA,
+                        "## 2. Project QA summaries",
+                        "## 2. Project QA summaries\n\n"
+                        "| Project | Status | Evidence |\n"
+                        "|---|---|---|\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "unrelated table row",
+            ):
+                env.run()
+
+    def test_partial_reusable_components_table_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_README_PATCH: _replace_patch(
+                        PROJECT_README,
+                        "## Reusable components",
+                        "## Reusable components\n\n"
+                        "| File name | Path | Description |\n"
+                        "|---|---|---|\n"
+                        "| existing-service.py | backend/app/services/ | Existing service |\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "unrelated table row",
+            ):
+                env.run()
+
+    def test_changed_table_header_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_QA_PATCH: _replace_patch(
+                        GLOBAL_QA,
+                        "## 2. Project QA summaries",
+                        "## 2. Project QA summaries\n\n"
+                        "| Project | Result | Evidence |\n"
+                        "|---|---|---|\n"
+                        "| SBM-API | passing | existing |\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "table header differs",
+            ):
+                env.run()
+
+    def test_duplicate_completed_objective_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            _seed_completed_project_group(env, (_completed_row(),))
+            patches = _closure_patches()
+            patches[COMPLETED_OBJECTIVES_PATCH] = _completed_replace_patch(
+                env,
+                _completed_row(),
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                patches,
+                lifecycle_phase="implementation-closure",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "duplicated|unique",
+            ):
+                env.run()
+
     def test_information_only_zip_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
@@ -470,8 +1442,8 @@ class ContextUpgradeTests(unittest.TestCase):
             env = UpgradeEnvironment(Path(temporary_directory))
             patch = _replace_patch(
                 GLOBAL_PROJECT,
-                "## 2. Current suite objective",
-                "## 2. Current suite objective\n\nUpdated.\n",
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
             )
             manifest = {
                 "project_name": "dp-api",
@@ -507,6 +1479,49 @@ class ContextUpgradeTests(unittest.TestCase):
             ):
                 env.run()
 
+    def test_repository_path_in_runtime_manifest_field_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 2. Project purpose",
+                        "## 2. Project purpose\n\nUpdated.\n",
+                    )
+                },
+                manifest_updates={
+                    "canonical_project_path": "SBM-SUITE/dp/DP-API"
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "canonical_project_path does not match",
+            ):
+                env.run()
+
+    def test_runtime_path_in_patch_target_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        "/suite/dp/DP-API/context/PROJECT_CONTEXT.md",
+                        "## 2. Project purpose",
+                        "## 2. Project purpose\n\nUpdated.\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "target_file must be SBM-SUITE/dp/DP-API",
+            ):
+                env.run()
+
     def test_unauthorized_heading_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
@@ -535,7 +1550,7 @@ class ContextUpgradeTests(unittest.TestCase):
                 {
                     GLOBAL_PROJECT_PATCH: _replace_patch(
                         GLOBAL_PROJECT,
-                        "## 2. Current suite objective",
+                        "## 2. Suite purpose",
                         "Content without heading.",
                     )
                 },
@@ -555,7 +1570,7 @@ class ContextUpgradeTests(unittest.TestCase):
                 {
                     GLOBAL_PROJECT_PATCH: _append_patch(
                         GLOBAL_PROJECT,
-                        "## 2. Current suite objective",
+                        "## 2. Suite purpose",
                         "## Invalid nested heading\n\nContent.",
                     )
                 },
@@ -572,8 +1587,8 @@ class ContextUpgradeTests(unittest.TestCase):
             env = UpgradeEnvironment(Path(temporary_directory))
             patch = _replace_patch(
                 GLOBAL_PROJECT,
-                "## 2. Current suite objective",
-                "## 2. Current suite objective\n\nUpdated.\n",
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
             )
             _create_upgrade_zip(
                 env.zip_path,
@@ -599,8 +1614,8 @@ class ContextUpgradeTests(unittest.TestCase):
             env = UpgradeEnvironment(Path(temporary_directory))
             patch = _replace_patch(
                 GLOBAL_PROJECT,
-                "## 2. Current suite objective",
-                "## 2. Current suite objective\n\nUpdated.\n",
+                "## 2. Suite purpose",
+                "## 2. Suite purpose\n\nUpdated.\n",
             )
             _create_upgrade_zip(
                 env.zip_path,
@@ -624,17 +1639,17 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_missing_format_contract_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
-            (env.suite_root / "FORMAT_CONTEXT.md").unlink()
             _create_upgrade_zip(
                 env.zip_path,
                 {
                     GLOBAL_PROJECT_PATCH: _replace_patch(
                         GLOBAL_PROJECT,
-                        "## 2. Current suite objective",
-                        "## 2. Current suite objective\n\nUpdated.\n",
+                        "## 2. Suite purpose",
+                        "## 2. Suite purpose\n\nUpdated.\n",
                     )
                 },
             )
+            (env.suite_root / "FORMAT_CONTEXT.md").unlink()
 
             with self.assertRaisesRegex(
                 ContextValidationError,
@@ -691,8 +1706,8 @@ class ContextUpgradeTests(unittest.TestCase):
                 {
                     GLOBAL_PROJECT_PATCH: _replace_patch(
                         GLOBAL_PROJECT,
-                        "## 2. Current suite objective",
-                        "## 2. Current suite objective\n\nUpdated global.\n",
+                        "## 2. Suite purpose",
+                        "## 2. Suite purpose\n\nUpdated global.\n",
                     ),
                     SUITE_CONTEXT_PATCH: _replace_patch(
                         SUITE_CONTEXT,

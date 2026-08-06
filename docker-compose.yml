@@ -5,6 +5,12 @@ services:
       - "8000:8000"
     env_file:
       - .env.dev
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+    command: >-
+      sh -c 'if [ "$${APP_ENV}" = "development" ]; then
+      exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload;
+      else exec uvicorn app.main:app --host 0.0.0.0 --port 8000; fi'
     volumes:
       - ./backend:/app
       - ../../context:/suite/context

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 class ProjectRegistryError(ValueError):
@@ -21,6 +21,14 @@ class ProjectLocation:
     @property
     def archive_root(self) -> str:
         return self.relative_root.as_posix()
+
+    @property
+    def runtime_root(self) -> str:
+        return f"/suite/{self.archive_root}"
+
+    @property
+    def repository_root(self) -> str:
+        return f"SBM-SUITE/{self.archive_root}"
 
 
 PROJECT_ALLOWLIST = {
@@ -43,6 +51,43 @@ def get_project_location(project_name: str) -> ProjectLocation:
             + ", ".join(sorted(PROJECT_ALLOWLIST))
         )
     return location
+
+
+def canonical_runtime_project_path(project_name: str) -> str:
+    """Return the canonical path used by the mounted runtime contract."""
+
+    return get_project_location(project_name).runtime_root
+
+
+def runtime_to_repository_path(runtime_path: str) -> str:
+    """Convert a canonical ``/suite`` path to repository-relative form."""
+
+    path = PurePosixPath(runtime_path)
+    if (
+        not runtime_path.startswith("/suite/")
+        or str(path) != runtime_path
+        or ".." in path.parts
+    ):
+        raise ProjectRegistryError(
+            "runtime path must be a normalized absolute path below /suite"
+        )
+    return PurePosixPath("SBM-SUITE", *path.parts[2:]).as_posix()
+
+
+def repository_to_runtime_path(repository_path: str) -> str:
+    """Convert an ``SBM-SUITE/...`` target to mounted runtime form."""
+
+    path = PurePosixPath(repository_path)
+    if (
+        path.is_absolute()
+        or not repository_path.startswith("SBM-SUITE/")
+        or str(path) != repository_path
+        or ".." in path.parts
+    ):
+        raise ProjectRegistryError(
+            "repository path must be normalized and relative to SBM-SUITE"
+        )
+    return PurePosixPath("/suite", *path.parts[1:]).as_posix()
 
 
 def resolve_allowed_project_root(

@@ -12,6 +12,7 @@ from app.services.contexts.context_index_service import (
 from app.services.contexts.models import RetrievedContextChunk
 from app.services.embedding_service import create_embedding
 from app.services.qdrant_service import search_similar
+from app.services.project_registry import get_project_location
 
 
 GLOBAL_REPOSITORY = "SBM-SUITE"
@@ -216,6 +217,14 @@ def _scope_filter(
         must.append(repository_condition)
         return Filter(must=must)
 
+    must.append(
+        FieldCondition(
+            key="project_path",
+            match=MatchValue(
+                value=get_project_location(project_name).archive_root
+            ),
+        )
+    )
     return Filter(
         must=must,
         must_not=[repository_condition],

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class ContextExportRequest(BaseModel):
@@ -13,6 +19,12 @@ class ContextExportRequest(BaseModel):
 
     project_name: str = Field(min_length=1)
     workflow: Literal["context-deploy"]
+    lifecycle_phase: Literal[
+        "planning-activation",
+        "implementation-progress",
+        "implementation-closure",
+    ]
+    objective_id: str = Field(min_length=1)
     project_root: str = Field(min_length=1)
     source_context_root: str = Field(min_length=1)
     format_context_path: str = Field(min_length=1)
@@ -21,6 +33,7 @@ class ContextExportRequest(BaseModel):
     changed_files: Optional[List[str]] = None
     git_diff: Optional[str] = None
     qa_results: Optional[str] = None
+    user_prompt: Optional[str] = None
 
     @field_validator(
         "project_root",
@@ -62,6 +75,17 @@ class ContextExportRequest(BaseModel):
 
         return normalized
 
+    @model_validator(mode="after")
+    def validate_planning_user_prompt(self):
+        if (
+            self.lifecycle_phase == "planning-activation"
+            and not self.user_prompt
+        ):
+            raise ValueError(
+                "user_prompt is required for planning-activation"
+            )
+        return self
+
 
 class ContextExportResponse(BaseModel):
     model_config = ConfigDict(
@@ -71,6 +95,12 @@ class ContextExportResponse(BaseModel):
     status: Literal["completed"]
     project_name: str = Field(min_length=1)
     workflow: Literal["context-deploy"]
+    lifecycle_phase: Literal[
+        "planning-activation",
+        "implementation-progress",
+        "implementation-closure",
+    ]
+    objective_id: str = Field(min_length=1)
     context_zip_path: str = Field(min_length=1)
     indexed_source_count: int = Field(ge=0)
     chunk_count: int = Field(ge=0)
@@ -119,3 +149,12 @@ class ContextUpgradeResponse(BaseModel):
             )
 
         return normalized
+
+
+class ContextContractResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str = Field(min_length=64, max_length=64)
+    supported_patch_paths: List[str]
+    lifecycle_phases: List[str]
+    canonical_projects: Dict[str, str]

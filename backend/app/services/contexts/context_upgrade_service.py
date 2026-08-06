@@ -24,6 +24,15 @@ from app.services.project_registry import (
 )
 from app.schemas.contexts import ContextUpgradeResponse
 from app.services.contexts.context_index_service import content_hash
+from app.services.contexts.contract_registry import (
+    LIFECYCLE_PHASES,
+    PATCH_DEFINITIONS,
+    build_contract_version,
+    canonical_project_path,
+    patch_target_file,
+    supported_patch_paths,
+    validate_format_context,
+)
 from app.services.contexts.file_discovery_service import (
     ContextValidationError,
     resolve_existing_directory,
@@ -51,86 +60,32 @@ INFORMATIONAL_FILES = frozenset(
     }
 )
 
-PATCH_DEFINITIONS = {
-    "patches/global-project-context.json": (
-        "SBM-SUITE/context/PROJECT_CONTEXT.md",
-        "suite",
-        "PROJECT_CONTEXT.md",
-        "## 2. Global `PROJECT_CONTEXT.md`",
-    ),
-    "patches/suite-context.json": (
-        "SBM-SUITE/context/SUITE_CONTEXT.md",
-        "suite",
-        "SUITE_CONTEXT.md",
-        "## 3. Global `SUITE_CONTEXT.md`",
-    ),
-    "patches/business-context.json": (
-        "SBM-SUITE/context/BUSINESS_CONTEXT.md",
-        "suite",
-        "BUSINESS_CONTEXT.md",
-        "## 4. Global `BUSINESS_CONTEXT.md`",
-    ),
-    "patches/global-qa-context.json": (
-        "SBM-SUITE/context/QA_CONTEXT.md",
-        "suite",
-        "QA_CONTEXT.md",
-        "## 5. Global `QA_CONTEXT.md`",
-    ),
-    "patches/security-context.json": (
-        "SBM-SUITE/context/SECURITY_CONTEXT.md",
-        "suite",
-        "SECURITY_CONTEXT.md",
-        "## 6. Global `SECURITY_CONTEXT.md`",
-    ),
-    "patches/data-context.json": (
-        "SBM-SUITE/context/DATA_CONTEXT.md",
-        "suite",
-        "DATA_CONTEXT.md",
-        "## 7. Global `DATA_CONTEXT.md`",
-    ),
-    "patches/decisions-context.json": (
-        "SBM-SUITE/context/DECISIONS_CONTEXT.md",
-        "suite",
-        "DECISIONS_CONTEXT.md",
-        "## 8. Global `DECISIONS_CONTEXT.md`",
-    ),
-    "patches/global-readme.json": (
-        "SBM-SUITE/context/README.md",
-        "suite",
-        "README.md",
-        "## 13. Project and suite `README.md`",
-    ),
-    "patches/project-context.json": (
-        "SBM-SUITE/{brand}/{project}/context/PROJECT_CONTEXT.md",
-        "project",
-        "context/PROJECT_CONTEXT.md",
-        "## 10. Project `context/PROJECT_CONTEXT.md`",
-    ),
-    "patches/project-qa-context.json": (
-        "SBM-SUITE/{brand}/{project}/context/QA_CONTEXT.md",
-        "project",
-        "context/QA_CONTEXT.md",
-        "## 11. Project `context/QA_CONTEXT.md`",
-    ),
-    "patches/project-deploy-context.json": (
-        "SBM-SUITE/{brand}/{project}/context/DEPLOY_CONTEXT.md",
-        "project",
-        "context/DEPLOY_CONTEXT.md",
-        "## 12. Project `context/DEPLOY_CONTEXT.md`",
-    ),
-    "patches/project-readme.json": (
-        "SBM-SUITE/{brand}/{project}/README.md",
-        "project",
-        "README.md",
-        "## 13. Project and suite `README.md`",
-    ),
-}
-
 PROJECT_SYNC_PATCHES = frozenset(
     {
         "patches/project-context.json",
         "patches/project-readme.json",
     }
+)
+
+OBJECTIVE_CONTEXT_PATCHES = frozenset(
+    {
+        "patches/global-project-context.json",
+        "patches/project-context.json",
+    }
+)
+COMPLETED_OBJECTIVES_PATCH = "patches/completed-objectives.json"
+ACTIVE_OBJECTIVE_HEADING = "## 3. Active objectives"
+PENDING_OBJECTIVE_HEADING = "## 4. Pending objectives"
+COMPLETED_OBJECTIVES_HEADING = "## 1. Completed objectives by project"
+COMPLETED_OBJECTIVES_TABLE_HEADER = (
+    "| Objective ID | Project | Objective | Final status | Priority | Branch | "
+    "Started | Completed | Summary | Validation | Documentation | Proposed commit |"
+)
+COMPLETED_OBJECTIVES_TABLE_SEPARATOR = (
+    "|---|---|---|---|---:|---|---|---|---|---|---|---|"
+)
+COMPLETED_OBJECTIVES_EMPTY_MARKERS = (
+    "No completed objectives have been migrated into this register yet.",
 )
 REUSABLE_CHANGE_MARKERS = (
     "/services/",
@@ -276,7 +231,8 @@ def validate_upgrade_manifest(
     actual_files: set[str],
     staging_directory: Path,
     project_root: Path,
-) -> tuple[str, list[str]]:
+    format_markdown: str,
+) -> tuple[str, list[str], str, str]:
     project_name_value = manifest.get("project_name")
     if not isinstance(project_name_value, str):
         raise ContextValidationError("manifest.project_name must be a string")
@@ -298,8 +254,55 @@ def validate_upgrade_manifest(
     updated_files = _require_unique_string_list(manifest, "updated_files")
     content_hashes = manifest.get("content_hashes")
     changed_files = manifest.get("changed_files", [])
+    manifest_supported_patches = manifest.get("supported_patch_paths")
+    lifecycle_phase = manifest.get("lifecycle_phase")
+    objective_id = manifest.get("objective_id")
     execution_mode = manifest.get("execution_mode", "evidence")
     user_prompt_file = manifest.get("user_prompt_file")
+
+    expected_contract_version = build_contract_version(format_markdown)
+    if manifest.get("contract_version") != expected_contract_version:
+        raise ContextValidationError(
+            "manifest.contract_version does not match the runtime contract"
+        )
+    if (
+        not isinstance(manifest_supported_patches, list)
+        or any(
+            not isinstance(path, str) or not path
+            for path in manifest_supported_patches
+        )
+        or len(manifest_supported_patches) != len(set(manifest_supported_patches))
+    ):
+        raise ContextValidationError(
+            "manifest.supported_patch_paths must be a unique string list"
+        )
+    unknown_supported = set(manifest_supported_patches) - set(
+        supported_patch_paths()
+    )
+    if unknown_supported:
+        raise ContextValidationError(
+            "manifest.supported_patch_paths contains unknown patches: "
+            + ", ".join(sorted(unknown_supported))
+        )
+    if manifest.get("canonical_project_path") != canonical_project_path(
+        project_name
+    ):
+        raise ContextValidationError(
+            "manifest.canonical_project_path does not match Project Registry"
+        )
+    if lifecycle_phase is None:
+        raise ContextValidationError("manifest.lifecycle_phase is required")
+    if lifecycle_phase not in LIFECYCLE_PHASES:
+        raise ContextValidationError(
+            "manifest.lifecycle_phase is not supported"
+        )
+    if not isinstance(objective_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*",
+        objective_id,
+    ):
+        raise ContextValidationError(
+            f"manifest.objective_id is required for {lifecycle_phase}"
+        )
 
     if execution_mode not in {"evidence", "user-guided"}:
         raise ContextValidationError(
@@ -389,6 +392,14 @@ def validate_upgrade_manifest(
         )
 
     expected_updated_files = actual_files - {"manifest.json"}
+    if "manifest.json" in updated_files:
+        raise ContextValidationError(
+            "manifest.updated_files must not include manifest.json"
+        )
+    if "manifest.json" in content_hashes:
+        raise ContextValidationError(
+            "manifest.content_hashes must not include manifest.json"
+        )
     normalized_changed_files = [
         f"/{PurePosixPath(path).as_posix().casefold().strip('/')}"
         for path in changed_files
@@ -403,6 +414,61 @@ def validate_upgrade_manifest(
             "Reusable or structural changes require project-context.json "
             "and project-readme.json patches"
         )
+    physical_patch_paths = expected_updated_files & set(PATCH_DEFINITIONS)
+    undeclared_patches = physical_patch_paths - set(manifest_supported_patches)
+    if undeclared_patches:
+        raise ContextValidationError(
+            "ZIP patch is absent from manifest.supported_patch_paths: "
+            + ", ".join(sorted(undeclared_patches))
+        )
+    phase_forbidden = {
+        patch_path
+        for patch_path in physical_patch_paths
+        if lifecycle_phase
+        not in PATCH_DEFINITIONS[patch_path].lifecycle_phases
+    }
+    if phase_forbidden:
+        raise ContextValidationError(
+            f"Patches are not allowed for {lifecycle_phase}: "
+            + ", ".join(sorted(phase_forbidden))
+        )
+    if lifecycle_phase == "planning-activation":
+        if "USER_PROMPT.md" not in actual_files:
+            raise ContextValidationError(
+                "planning-activation requires USER_PROMPT.md"
+            )
+        if COMPLETED_OBJECTIVES_PATCH in actual_files:
+            raise ContextValidationError(
+                "planning-activation forbids completed-objectives.json"
+            )
+    if lifecycle_phase == "implementation-progress" and (
+        COMPLETED_OBJECTIVES_PATCH in actual_files
+    ):
+        raise ContextValidationError(
+            "implementation-progress forbids completed-objectives.json"
+        )
+    if lifecycle_phase == "implementation-closure":
+        closure_patches = {
+            COMPLETED_OBJECTIVES_PATCH,
+            "patches/global-project-context.json",
+            "patches/project-context.json",
+            "patches/global-qa-context.json",
+            "patches/project-qa-context.json",
+        }
+        missing_closure_patches = closure_patches - actual_files
+        if missing_closure_patches:
+            raise ContextValidationError(
+                "implementation-closure is missing required patches: "
+                + ", ".join(sorted(missing_closure_patches))
+            )
+        qa = manifest.get("qa")
+        if not isinstance(qa, dict) or qa.get("status") not in {
+            "passed",
+            "success",
+        }:
+            raise ContextValidationError(
+                "implementation-closure requires successful QA"
+            )
     if not set(updated_files).issubset(declared_allowlist):
         raise ContextValidationError(
             "manifest.updated_files must be a subset of manifest.allowed_files"
@@ -415,9 +481,9 @@ def validate_upgrade_manifest(
         raise ContextValidationError(
             "manifest.updated_files must match non-manifest ZIP files"
         )
-    if set(content_hashes) != expected_updated_files:
+    if set(content_hashes) != set(updated_files):
         raise ContextValidationError(
-            "manifest.content_hashes must match non-manifest ZIP files"
+            "manifest.content_hashes keys must match manifest.updated_files"
         )
 
     for archive_path, digest in content_hashes.items():
@@ -485,7 +551,13 @@ def validate_upgrade_manifest(
             "manifest.commit metadata does not match COMMIT_MESSAGE.md"
         )
 
-    return project_name, updated_files
+    validate_objective_lifecycle_patches(
+        staging_directory,
+        actual_files,
+        lifecycle_phase,
+    )
+
+    return project_name, updated_files, lifecycle_phase, objective_id
 
 
 def _extract_contract_headings(
@@ -493,12 +565,22 @@ def _extract_contract_headings(
     contract_section: str,
 ) -> list[str]:
     section_start = format_markdown.find(contract_section)
+    matched_section = contract_section
     if section_start < 0:
-        raise ContextValidationError(
-            f"FORMAT_CONTEXT.md is missing contract section: {contract_section}"
+        normalized_title = re.sub(r"^##\s+\d+\.\s+", "", contract_section).strip()
+        heading_pattern = re.compile(
+            rf"^##\s+\d+\.\s+{re.escape(normalized_title)}\s*$",
+            flags=re.MULTILINE,
         )
+        heading_match = heading_pattern.search(format_markdown)
+        if heading_match is None:
+            raise ContextValidationError(
+                f"FORMAT_CONTEXT.md is missing contract section: {contract_section}"
+            )
+        section_start = heading_match.start()
+        matched_section = heading_match.group(0)
 
-    section_body = format_markdown[section_start + len(contract_section) :]
+    section_body = format_markdown[section_start + len(matched_section) :]
     section_end = section_body.find("\n---\n")
     if section_end >= 0:
         section_body = section_body[:section_end]
@@ -560,8 +642,23 @@ def _resolve_target(
                 f"Target symlinks are not allowed: {target}"
             )
     if not target.is_file():
-        raise ContextValidationError(
-            f"Target must be an existing regular file: {target}"
+        completed_objectives_target = (
+            scope == "suite"
+            and relative_path == "COMPLETED_OBJECTIVES.md"
+        )
+        if not completed_objectives_target:
+            raise ContextValidationError(
+                f"Target must be an existing regular file: {target}"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "# COMPLETED_OBJECTIVES.md\n\n"
+            "> Last updated\n"
+            "> Purpose\n"
+            "> Accuracy note\n\n"
+            "## 1. Completed objectives by project\n\n"
+            "## 2. Document boundary\n",
+            encoding="utf-8",
         )
     return target
 
@@ -699,12 +796,488 @@ def _apply_operations(markdown: str, operations: list[dict[str, str]]) -> str:
     return result.rstrip() + "\n"
 
 
+
+def _patch_operation_headings(
+    staging_directory: Path,
+    patch_path: str,
+) -> set[str]:
+    try:
+        payload = json.loads(
+            _read_utf8(
+                staging_directory.joinpath(*PurePosixPath(patch_path).parts),
+                patch_path,
+            )
+        )
+    except json.JSONDecodeError as exc:
+        raise ContextValidationError(
+            f"{patch_path} must contain valid JSON"
+        ) from exc
+
+    operations = payload.get("operations") if isinstance(payload, dict) else None
+    if not isinstance(operations, list):
+        return set()
+    return {
+        operation.get("heading")
+        for operation in operations
+        if isinstance(operation, dict) and isinstance(operation.get("heading"), str)
+    }
+
+
+def validate_objective_lifecycle_patches(
+    staging_directory: Path,
+    actual_files: set[str],
+    lifecycle_phase: str,
+):
+    global_project_present = "patches/global-project-context.json" in actual_files
+    project_present = "patches/project-context.json" in actual_files
+    completed_present = COMPLETED_OBJECTIVES_PATCH in actual_files
+
+    objective_headings = {ACTIVE_OBJECTIVE_HEADING, PENDING_OBJECTIVE_HEADING}
+    objective_context_changed = False
+    for patch_path in OBJECTIVE_CONTEXT_PATCHES & actual_files:
+        headings = _patch_operation_headings(staging_directory, patch_path)
+        if headings & objective_headings:
+            objective_context_changed = True
+
+    if objective_context_changed and global_project_present != project_present:
+        raise ContextValidationError(
+            "Objective context changes require both global-project-context.json "
+            "and project-context.json"
+        )
+
+    if completed_present:
+        if not OBJECTIVE_CONTEXT_PATCHES.issubset(actual_files):
+            raise ContextValidationError(
+                "Completed objective closure requires global and project "
+                "PROJECT_CONTEXT patches"
+            )
+        completed_headings = _patch_operation_headings(
+            staging_directory,
+            COMPLETED_OBJECTIVES_PATCH,
+        )
+        if COMPLETED_OBJECTIVES_HEADING not in completed_headings:
+            raise ContextValidationError(
+                "completed-objectives.json must target the completed objectives "
+                "history section"
+            )
+        if not objective_context_changed:
+            raise ContextValidationError(
+                "Completed objective closure must remove the objective from "
+                "operational objective sections"
+            )
+
+    if lifecycle_phase != "implementation-closure" and completed_present:
+        raise ContextValidationError(
+            f"{lifecycle_phase} forbids completed-objectives.json"
+        )
+
+
+def _markdown_tables(markdown: str) -> dict[str, tuple[str, list[str]]]:
+    tables: dict[str, tuple[str, list[str]]] = {}
+    heading = ""
+    lines = markdown.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        if re.fullmatch(r"#{1,3}\s+.+", line):
+            heading = line
+        if (
+            line.startswith("|")
+            and index + 1 < len(lines)
+            and re.fullmatch(r"\|[\s|:-]+\|", lines[index + 1].strip())
+        ):
+            header = line
+            rows: list[str] = []
+            index += 2
+            while index < len(lines) and lines[index].strip().startswith("|"):
+                rows.append(lines[index].strip())
+                index += 1
+            tables[heading] = (header, rows)
+            continue
+        index += 1
+    return tables
+
+
+def _objective_ids(markdown: str) -> list[str]:
+    return re.findall(r"(?m)^\|\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*\|", markdown)
+
+
+def _section_markdown(markdown: str, heading: str) -> str:
+    start, end = _section_bounds(markdown, heading)
+    return markdown[start:end]
+
+
+def _markdown_heading_entries(
+    markdown: str,
+    level: int,
+) -> list[tuple[int, str]]:
+    entries: list[tuple[int, str]] = []
+    offset = 0
+    fence_character: str | None = None
+    for line in markdown.splitlines(keepends=True):
+        stripped = line.strip()
+        fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence_match:
+            marker_character = fence_match.group(1)[0]
+            if fence_character is None:
+                fence_character = marker_character
+            elif marker_character == fence_character:
+                fence_character = None
+            offset += len(line)
+            continue
+        if fence_character is None and re.fullmatch(
+            rf"#{{{level}}}\s+.+",
+            stripped,
+        ):
+            entries.append((offset, stripped))
+        offset += len(line)
+    return entries
+
+
+def _markdown_lines_outside_fences(markdown: str) -> list[str]:
+    lines: list[str] = []
+    fence_character: str | None = None
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence_match:
+            marker_character = fence_match.group(1)[0]
+            if fence_character is None:
+                fence_character = marker_character
+            elif marker_character == fence_character:
+                fence_character = None
+            continue
+        if fence_character is None:
+            lines.append(stripped)
+    return lines
+
+
+def _completed_project_headings(markdown: str) -> list[str]:
+    section = _section_markdown(markdown, COMPLETED_OBJECTIVES_HEADING)
+    return [
+        heading
+        for _, heading in _markdown_heading_entries(section, 3)
+    ]
+
+
+def _completed_project_section(markdown: str, project_heading: str) -> str:
+    section = _section_markdown(markdown, COMPLETED_OBJECTIVES_HEADING)
+    entries = _markdown_heading_entries(section, 3)
+    matching_indexes = [
+        index
+        for index, (_, heading) in enumerate(entries)
+        if heading == project_heading
+    ]
+    if len(matching_indexes) != 1:
+        raise ContextValidationError(
+            f"Completed objectives must contain exactly one {project_heading} heading"
+        )
+    entry_index = matching_indexes[0]
+    start = entries[entry_index][0]
+    end = (
+        entries[entry_index + 1][0]
+        if entry_index + 1 < len(entries)
+        else len(section)
+    )
+    return section[start:end]
+
+
+def _contains_completed_objectives_table(markdown: str) -> bool:
+    lines = _markdown_lines_outside_fences(markdown)
+    for index, line in enumerate(lines[:-1]):
+        if (
+            line == COMPLETED_OBJECTIVES_TABLE_HEADER
+            and lines[index + 1] == COMPLETED_OBJECTIVES_TABLE_SEPARATOR
+        ):
+            return True
+    return False
+
+
+def _strip_completed_empty_markers(markdown: str) -> str:
+    result = markdown
+    for marker in COMPLETED_OBJECTIVES_EMPTY_MARKERS:
+        result = re.sub(
+            rf"(?m)^[ \t]*{re.escape(marker)}[ \t]*\r?\n(?:[ \t]*\r?\n)?",
+            "",
+            result,
+            count=1,
+        )
+    return result
+
+
+def _prepare_completed_objectives_operation(
+    current_markdown: str,
+    operations: list[dict[str, str]],
+    project_directory: str,
+) -> str:
+    if len(operations) != 1:
+        raise ContextValidationError(
+            "completed-objectives.json must contain exactly one operation"
+        )
+
+    operation = operations[0]
+    if operation["heading"] != COMPLETED_OBJECTIVES_HEADING:
+        raise ContextValidationError(
+            "completed-objectives.json must target the completed objectives "
+            "history section"
+        )
+
+    project_heading = f"### {project_directory}"
+    current_headings = _completed_project_headings(current_markdown)
+    if len(current_headings) != len(set(current_headings)):
+        raise ContextValidationError(
+            "COMPLETED_OBJECTIVES.md contains duplicate project headings"
+        )
+
+    project_heading_count = current_headings.count(project_heading)
+    if project_heading_count > 1:
+        raise ContextValidationError(
+            f"COMPLETED_OBJECTIVES.md contains duplicate {project_heading} headings"
+        )
+
+    if project_heading_count == 0:
+        if operation["operation"] != "append_to_section":
+            raise ContextValidationError(
+                "A missing completed-objectives project group requires "
+                "append_to_section"
+            )
+        appended_headings = [
+            heading
+            for _, heading in _markdown_heading_entries(operation["content"], 3)
+        ]
+        if appended_headings != [project_heading]:
+            raise ContextValidationError(
+                "The first completed-objectives entry must append exactly one "
+                f"{project_heading} heading"
+            )
+        if not _contains_completed_objectives_table(operation["content"]):
+            raise ContextValidationError(
+                "The first completed-objectives project group must include the "
+                "required table"
+            )
+        return _strip_completed_empty_markers(current_markdown)
+
+    if operation["operation"] != "replace_section":
+        raise ContextValidationError(
+            "An existing completed-objectives project group requires replace_section"
+        )
+
+    replacement_headings = _completed_project_headings(operation["content"])
+    if replacement_headings != current_headings:
+        raise ContextValidationError(
+            "A completed-objectives replacement must preserve every existing "
+            "project heading in order"
+        )
+    return current_markdown
+
+
+def _validate_preserved_tables(
+    original: str,
+    patched: str,
+    archive_target: str,
+    project_name: str,
+    project_directory: str,
+    objective_id: str,
+) -> None:
+    original_tables = _markdown_tables(original)
+    patched_tables = _markdown_tables(patched)
+    for heading, (header, rows) in original_tables.items():
+        if heading not in patched_tables:
+            raise ContextValidationError(
+                f"Patched document removes a required table: {archive_target} {heading}"
+            )
+        patched_header, patched_rows = patched_tables[heading]
+        if patched_header != header:
+            raise ContextValidationError(
+                f"Patched table header differs from the original: {archive_target} {heading}"
+            )
+        for row in rows:
+            requested_objective_row = objective_id in row
+            current_project_summary = (
+                archive_target
+                in {
+                    "SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    "SBM-SUITE/context/QA_CONTEXT.md",
+                }
+                and any(
+                    marker.casefold() in row.casefold()
+                    for marker in (project_name, project_directory)
+                )
+            )
+            if not requested_objective_row and not current_project_summary:
+                if row not in patched_rows:
+                    raise ContextValidationError(
+                        "Patch removes or changes an unrelated table row: "
+                        f"{archive_target} {heading}"
+                    )
+
+    reusable_heading = "## Reusable components"
+    if reusable_heading in original_tables:
+        expected_header = "| File name | Path | Description |"
+        if original_tables[reusable_heading][0] != expected_header:
+            raise ContextValidationError(
+                "Reusable components table has an invalid header"
+            )
+
+
+def _validate_objective_transition(
+    originals: dict[str, str],
+    staged: dict[str, str],
+    lifecycle_phase: str,
+    objective_id: str,
+    project_directory: str,
+) -> None:
+    context_targets = {
+        target
+        for target in staged
+        if target == "SBM-SUITE/context/PROJECT_CONTEXT.md"
+        or target.endswith("/context/PROJECT_CONTEXT.md")
+    }
+
+    if lifecycle_phase == "implementation-closure":
+        for target in context_targets:
+            active_before = _objective_ids(
+                _section_markdown(originals[target], ACTIVE_OBJECTIVE_HEADING)
+            )
+            if objective_id not in active_before:
+                raise ContextValidationError(
+                    f"Objective {objective_id} must exist as active before closure"
+                )
+            if objective_id in _objective_ids(staged[target]):
+                raise ContextValidationError(
+                    f"Objective {objective_id} was not removed during closure"
+                )
+            other_before = [
+                value for value in _objective_ids(originals[target])
+                if value != objective_id
+            ]
+            other_after = [
+                value for value in _objective_ids(staged[target])
+                if value != objective_id
+            ]
+            if other_before != other_after:
+                raise ContextValidationError(
+                    "Closure removes or changes an objective other than "
+                    f"{objective_id}"
+                )
+
+        completed_target = "SBM-SUITE/context/COMPLETED_OBJECTIVES.md"
+        original_completed = originals[completed_target]
+        staged_completed = staged[completed_target]
+        original_ids = _objective_ids(original_completed)
+        staged_ids = _objective_ids(staged_completed)
+        if len(original_ids) != len(set(original_ids)):
+            raise ContextValidationError("Completed objective IDs must be unique")
+        if objective_id in original_ids:
+            raise ContextValidationError(
+                f"Completed objective ID is duplicated: {objective_id}"
+            )
+        if staged_ids.count(objective_id) != 1:
+            raise ContextValidationError(
+                "Closure must append exactly one completed objective entry"
+            )
+        if [value for value in staged_ids if value != objective_id] != original_ids:
+            raise ContextValidationError(
+                "Closure modifies unrelated completed objective history"
+            )
+        project_heading = f"### {project_directory}"
+        original_headings = _completed_project_headings(original_completed)
+        staged_headings = _completed_project_headings(staged_completed)
+        if len(original_headings) != len(set(original_headings)):
+            raise ContextValidationError(
+                "COMPLETED_OBJECTIVES.md contains duplicate project headings"
+            )
+        if len(staged_headings) != len(set(staged_headings)):
+            raise ContextValidationError(
+                "Closure must not create duplicate project headings"
+            )
+
+        original_project_count = original_headings.count(project_heading)
+        if original_project_count > 1:
+            raise ContextValidationError(
+                f"COMPLETED_OBJECTIVES.md contains duplicate {project_heading} headings"
+            )
+        if original_project_count == 0:
+            if staged_headings != [*original_headings, project_heading]:
+                raise ContextValidationError(
+                    "Closure must append exactly one new project heading and preserve "
+                    "all existing project groups"
+                )
+        elif staged_headings != original_headings:
+            raise ContextValidationError(
+                "Closure must preserve every existing project heading in order"
+            )
+
+        project_section = _completed_project_section(
+            staged_completed,
+            project_heading,
+        )
+        if not _contains_completed_objectives_table(project_section):
+            raise ContextValidationError(
+                "Completed objective project group has an invalid table"
+            )
+        if _objective_ids(project_section).count(objective_id) != 1:
+            raise ContextValidationError(
+                "The completed objective must be recorded under its project heading"
+            )
+    elif lifecycle_phase == "implementation-progress":
+        for target in context_targets:
+            if (
+                objective_id in _objective_ids(originals[target])
+                and objective_id not in _objective_ids(staged[target])
+            ):
+                raise ContextValidationError(
+                    "implementation-progress cannot close the objective"
+                )
+    elif lifecycle_phase == "planning-activation" and context_targets:
+        for target in context_targets:
+            if objective_id not in _objective_ids(staged[target]):
+                raise ContextValidationError(
+                    "planning-activation must add the requested objective"
+                )
+
+
+def _validate_staged_preservation(
+    replacements: dict[str, tuple[Path, str]],
+    project_name: str,
+    project_directory: str,
+    lifecycle_phase: str,
+    objective_id: str,
+) -> None:
+    originals = {
+        target: _read_utf8(path, target)
+        for target, (path, _) in replacements.items()
+    }
+    staged = {
+        target: content
+        for target, (_, content) in replacements.items()
+    }
+    for target, original in originals.items():
+        _validate_preserved_tables(
+            original,
+            staged[target],
+            target,
+            project_name,
+            project_directory,
+            objective_id,
+        )
+    _validate_objective_transition(
+        originals,
+        staged,
+        lifecycle_phase,
+        objective_id,
+        project_directory,
+    )
+
+
 def validate_and_build_replacements(
     staging_directory: Path,
     updated_files: list[str],
     project_name: str,
     suite_context_root: Path,
     project_root: Path,
+    lifecycle_phase: str,
+    objective_id: str,
 ) -> dict[str, tuple[Path, str]]:
     format_path = suite_context_root / FORMAT_CONTEXT_FILENAME
     if format_path.is_symlink() or not format_path.is_file():
@@ -718,19 +1291,11 @@ def validate_and_build_replacements(
     for patch_path in updated_files:
         if patch_path not in PATCH_DEFINITIONS:
             continue
-        target_template, scope, relative_path, contract_section = PATCH_DEFINITIONS[
-            patch_path
-        ]
-        brand = project_root.parent.name
-        project = project_root.name
-        expected_target = target_template.format(
-            project_name=project_name,
-            brand=brand,
-            project=project,
-        )
+        definition = PATCH_DEFINITIONS[patch_path]
+        expected_target = patch_target_file(patch_path, project_name)
         target = _resolve_target(
-            scope,
-            relative_path,
+            definition.scope,
+            definition.relative_target,
             suite_context_root,
             project_root,
         )
@@ -752,7 +1317,7 @@ def validate_and_build_replacements(
         else:
             allowed_headings = _extract_contract_headings(
                 format_markdown,
-                contract_section,
+                definition.contract_section,
             )
         try:
             payload = json.loads(
@@ -772,6 +1337,19 @@ def validate_and_build_replacements(
             expected_target,
             set(allowed_headings),
         )
+        if patch_path == COMPLETED_OBJECTIVES_PATCH:
+            current_markdown = _prepare_completed_objectives_operation(
+                current_markdown,
+                operations,
+                project_root.name,
+            )
+        elif any(
+            operation["operation"] not in definition.allowed_operations
+            for operation in operations
+        ):
+            raise ContextValidationError(
+                f"{patch_path} contains an operation forbidden by PATCH_DEFINITIONS"
+            )
         for operation in operations:
             key = (expected_target, operation["heading"])
             if key in target_headings_seen:
@@ -790,6 +1368,13 @@ def validate_and_build_replacements(
 
     if not replacements:
         raise ContextValidationError("No valid context replacements were generated")
+    _validate_staged_preservation(
+        replacements,
+        project_name,
+        project_root.name,
+        lifecycle_phase,
+        objective_id,
+    )
     return replacements
 
 
@@ -1014,11 +1599,30 @@ def upgrade_contexts(
             )
         except ProjectRegistryError as exc:
             raise ContextValidationError(str(exc)) from exc
-        project_name, updated_files = validate_upgrade_manifest(
+        format_path = suite_root / FORMAT_CONTEXT_FILENAME
+        if format_path.is_symlink() or not format_path.is_file():
+            raise ContextValidationError(
+                f"Missing required format contract: {format_path}"
+            )
+        format_markdown = _read_utf8(
+            format_path,
+            FORMAT_CONTEXT_FILENAME,
+        )
+        try:
+            validate_format_context(format_markdown)
+        except ValueError as exc:
+            raise ContextValidationError(str(exc)) from exc
+        (
+            project_name,
+            updated_files,
+            lifecycle_phase,
+            objective_id,
+        ) = validate_upgrade_manifest(
             manifest,
             actual_files,
             staging_directory,
             resolved_project_root,
+            format_markdown,
         )
         replacements = validate_and_build_replacements(
             staging_directory,
@@ -1026,6 +1630,8 @@ def upgrade_contexts(
             project_name,
             suite_root,
             resolved_project_root,
+            lifecycle_phase,
+            objective_id,
         )
         generated_at = now()
         timestamp = generated_at.strftime("%Y%m%d_%H%M%S_%f")
@@ -1037,7 +1643,7 @@ def upgrade_contexts(
             project_name,
             timestamp,
             generated_at.isoformat(),
-            f"Apply validated context section patches for {project_name}",
+            f"Apply validated context lifecycle and section patches for {project_name}",
         )
         apply_replacements(replacements, backup_directory)
         cleanup_upgrade_input(zip_path)
