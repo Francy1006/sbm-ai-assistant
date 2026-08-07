@@ -386,14 +386,15 @@ class DocumentationExportEndpointTests(
                     names,
                 )
 
-                for filename in (
-                    DOCUMENTATION_FILES
-                ):
-                    self.assertIn(
-                        (
-                            "documentation/"
-                            f"{filename}"
-                        ),
+                self.assertIn(
+                    "documentation/architecture.md",
+                    names,
+                )
+                for filename in DOCUMENTATION_FILES:
+                    if filename == "architecture.md":
+                        continue
+                    self.assertNotIn(
+                        f"documentation/{filename}",
                         names,
                     )
 
@@ -434,6 +435,27 @@ class DocumentationExportEndpointTests(
                 self.assertEqual(
                     manifest["top_k"],
                     8,
+                )
+                self.assertEqual(
+                    manifest["snapshot_policy"],
+                    "rag-selected-complete",
+                )
+                self.assertEqual(
+                    len(manifest["documentation_files"]),
+                    1,
+                )
+                snapshot = manifest["documentation_files"][0]
+                self.assertEqual(
+                    snapshot["archive_path"],
+                    "documentation/architecture.md",
+                )
+                self.assertTrue(snapshot["complete"])
+                self.assertTrue(snapshot["selected_by_rag"])
+                self.assertEqual(
+                    snapshot["content_hash"],
+                    hashlib.sha256(
+                        archive.read("documentation/architecture.md")
+                    ).hexdigest(),
                 )
                 self.assertTrue(
                     manifest[
@@ -606,6 +628,60 @@ class DocumentationExportServiceTests(
                         "project_tree"
                     ]["included"]
                 )
+
+    def test_retrieval_filters_stale_documentation_paths(
+        self,
+    ):
+        current_point = SimpleNamespace(
+            id="current",
+            score=0.90,
+            payload={
+                "source_path": "/docs/current.md",
+                "archive_path": "documentation/current.md",
+                "section": "Overview",
+                "text": "Current documentation.",
+            },
+        )
+        stale_point = SimpleNamespace(
+            id="stale",
+            score=0.99,
+            payload={
+                "source_path": "/docs/stale.md",
+                "archive_path": "documentation/stale.md",
+                "section": "Overview",
+                "text": "Stale documentation.",
+            },
+        )
+
+        with (
+            patch(
+                "app.services.documentation."
+                "documentation_retrieval_service.create_embedding",
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "app.services.documentation."
+                "documentation_retrieval_service.search_similar",
+                side_effect=[
+                    [stale_point, current_point],
+                    [],
+                ],
+            ),
+        ):
+            chunks = retrieve_relevant_documentation_chunks(
+                project_name="dp-api",
+                query="QA closure",
+                top_k=8,
+                allowed_archive_paths=[
+                    "documentation/current.md"
+                ],
+            )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(
+            chunks[0].archive_path,
+            "documentation/current.md",
+        )
 
     def test_export_rejects_project_tree_symlink(
         self,

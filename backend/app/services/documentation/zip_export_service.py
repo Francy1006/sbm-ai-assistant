@@ -164,20 +164,42 @@ def create_documentation_package(
         project_name,
     )
 
-    packaged_documentation_files = [
-        documentation_file
+    protected_contract_paths = {
+        FORMAT_CONTEXT_ARCHIVE_PATH,
+        SYSTEM_PROMPT_ARCHIVE_PATH,
+    }
+    retrieved_documentation_paths = {
+        chunk.archive_path
+        for chunk in retrieved_documentation_chunks
+        if chunk.archive_path
+        and chunk.archive_path not in protected_contract_paths
+    }
+    available_documentation_by_path = {
+        documentation_file.archive_path: documentation_file
         for documentation_file in documentation_files
         if documentation_file.archive_path
-        not in {
-            FORMAT_CONTEXT_ARCHIVE_PATH,
-            SYSTEM_PROMPT_ARCHIVE_PATH,
-        }
+        not in protected_contract_paths
+    }
+    missing_snapshot_paths = sorted(
+        retrieved_documentation_paths
+        - set(available_documentation_by_path)
+    )
+
+    if missing_snapshot_paths:
+        raise ValueError(
+            "RAG-selected documentation candidates are missing complete "
+            "source snapshots: " + ", ".join(missing_snapshot_paths)
+        )
+
+    packaged_documentation_files = [
+        available_documentation_by_path[archive_path]
+        for archive_path in sorted(retrieved_documentation_paths)
     ]
 
-    documentation_paths = sorted(
+    documentation_paths = [
         documentation_file.archive_path
         for documentation_file in packaged_documentation_files
-    )
+    ]
     documentation_files_content = _text_file(
         "\n".join(documentation_paths),
         "No authorized documentation files were discovered.",
@@ -247,10 +269,14 @@ def create_documentation_package(
                 }
             )
         ],
+        "snapshot_policy": "rag-selected-complete",
         "documentation_files": [
             {
                 "source_path": str(documentation_file.source_path),
                 "archive_path": documentation_file.archive_path,
+                "complete": True,
+                "selected_by_rag": True,
+                "content_hash": content_hash(documentation_file.content),
             }
             for documentation_file in packaged_documentation_files
         ],

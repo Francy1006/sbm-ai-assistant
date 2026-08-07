@@ -354,6 +354,7 @@ def retrieve_relevant_documentation_chunks(
     project_name: str,
     query: str,
     top_k: int = DOCUMENTATION_EXPORT_TOP_K,
+    allowed_archive_paths: list[str] | None = None,
 ) -> list[RetrievedContextChunk]:
     normalized_project_name = project_name.strip()
     normalized_query = query.strip()
@@ -373,16 +374,23 @@ def retrieve_relevant_documentation_chunks(
             "top_k must be greater than zero"
         )
 
+    allowed_paths = {
+        path.strip()
+        for path in (allowed_archive_paths or [])
+        if path and path.strip()
+    }
+
     vector = create_embedding(
         normalized_query
     )
     candidates = []
+    search_limit = top_k if not allowed_paths else max(top_k * 4, top_k)
 
     for global_scope in (True, False):
         candidates.extend(
             search_similar(
                 vector=vector,
-                limit=top_k,
+                limit=search_limit,
                 collection_name=(
                     DOCUMENTATION_COLLECTION_NAME
                 ),
@@ -413,8 +421,16 @@ def retrieve_relevant_documentation_chunks(
         if key in seen:
             continue
 
-        seen.add(key)
         payload = point.payload or {}
+        archive_path = payload.get(
+            "archive_path",
+            "",
+        )
+
+        if allowed_paths and archive_path not in allowed_paths:
+            continue
+
+        seen.add(key)
 
         unique_chunks.append(
             RetrievedContextChunk(

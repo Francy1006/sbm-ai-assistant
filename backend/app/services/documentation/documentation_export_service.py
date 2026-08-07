@@ -425,6 +425,7 @@ def export_documentation(
             project_name=project_name,
             query=query,
             top_k=(DOCUMENTATION_EXPORT_TOP_K),
+            allowed_archive_paths=documentation_paths,
         )
 
         # Usa los contextos enviados o los recupera desde sbm_contexts
