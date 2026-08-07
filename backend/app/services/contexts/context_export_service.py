@@ -30,7 +30,10 @@ from app.services.contexts.markdown_chunk_service import (
     split_markdown_into_chunks,
 )
 from app.services.contexts.models import FullContextFile
-from app.services.contexts.zip_export_service import create_context_package
+from app.services.contexts.zip_export_service import (
+    create_context_package,
+    create_context_upload_package,
+)
 
 
 logger = logging.getLogger("uvicorn.error.context_export.service")
@@ -393,18 +396,37 @@ def export_contexts(
         project_name,
     )
 
-    response = ContextExportResponse(
-        status="completed",
-        project_name=project_name,
-        workflow="context-deploy",
-        lifecycle_phase=request.lifecycle_phase,
-        objective_id=request.objective_id,
-        context_zip_path=str(context_zip_path),
-        indexed_source_count=indexed_source_count,
-        chunk_count=chunk_count,
-        collection_name=CONTEXT_COLLECTION_NAME,
-        errors=errors,
-    )
+    upload_zip_path = paths.output_directory / "context-deploy-package.zip"
+    response_payload = {
+        "status": "completed",
+        "project_name": project_name,
+        "workflow": "context-deploy",
+        "lifecycle_phase": request.lifecycle_phase,
+        "objective_id": request.objective_id,
+        "context_zip_path": str(context_zip_path),
+        "upload_zip_path": str(upload_zip_path),
+        "indexed_source_count": indexed_source_count,
+        "chunk_count": chunk_count,
+        "collection_name": CONTEXT_COLLECTION_NAME,
+        "errors": errors,
+    }
+
+    try:
+        create_context_upload_package(
+            output_directory=paths.output_directory,
+            context_zip_path=context_zip_path,
+            response_payload=response_payload,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Context upload ZIP creation failed for project=%s",
+            project_name,
+        )
+        raise ContextExportInfrastructureError(
+            "Context upload ZIP creation failed"
+        ) from exc
+
+    response = ContextExportResponse(**response_payload)
 
     logger.info(
         "[CONTEXT_EXPORT] response construction complete project=%s "

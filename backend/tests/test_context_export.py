@@ -182,6 +182,10 @@ class ContextExportEndpointTests(unittest.TestCase):
             project_root = suite_root / "dp" / "DP-API"
             output_directory = suite_root / "context" / "output"
             output_directory.mkdir(parents=True)
+            (output_directory / "SYS_PROMPT.md").write_text(
+                "# Runtime prompt\n",
+                encoding="utf-8",
+            )
 
             with ZipFile(
                 output_directory / "context-package.zip",
@@ -296,6 +300,24 @@ class ContextExportEndpointTests(unittest.TestCase):
             self.assertEqual(payload["indexed_source_count"], 15)
             self.assertEqual(payload["collection_name"], "sbm_contexts")
             self.assertEqual(payload["errors"], [])
+            self.assertTrue(payload["upload_zip_path"].endswith(
+                "context-deploy-package.zip"
+            ))
+            with ZipFile(payload["upload_zip_path"]) as upload_archive:
+                self.assertEqual(
+                    set(upload_archive.namelist()),
+                    {
+                        "context-export-response.json",
+                        "context-package.zip",
+                        "SYS_PROMPT.md",
+                    },
+                )
+                embedded_response = json.loads(
+                    upload_archive.read(
+                        "context-export-response.json"
+                    ).decode("utf-8")
+                )
+                self.assertEqual(embedded_response, payload)
             self.assertTrue(
                 all(
                     source.source_path.is_absolute()
@@ -560,6 +582,10 @@ class ContextExportEndpointTests(unittest.TestCase):
             project_root = suite_root / "dp" / "DP-API"
             output_directory = suite_root / "context" / "output"
             output_directory.mkdir(parents=True)
+            (output_directory / "SYS_PROMPT.md").write_text(
+                "# Runtime prompt\n",
+                encoding="utf-8",
+            )
 
             for source_path, archive_path in GLOBAL_SOURCE_FILES:
                 _write_markdown(suite_root / source_path, archive_path)
@@ -625,6 +651,10 @@ class ContextExportEndpointTests(unittest.TestCase):
             project_root = suite_root / "dp" / "DP-API"
             output_directory = suite_root / "context" / "output"
             output_directory.mkdir(parents=True)
+            (output_directory / "SYS_PROMPT.md").write_text(
+                "# Runtime prompt\n",
+                encoding="utf-8",
+            )
 
             for source_path, archive_path in GLOBAL_SOURCE_FILES:
                 _write_markdown(suite_root / source_path, archive_path)
@@ -727,6 +757,7 @@ class ContextExportRequestTests(unittest.TestCase):
             lifecycle_phase="implementation-closure",
             objective_id="OBJ-001",
             context_zip_path="/suite/context/output/context-package.zip",
+            upload_zip_path="/suite/context/output/context-deploy-package.zip",
             indexed_source_count=0,
             chunk_count=0,
             collection_name="sbm_contexts",

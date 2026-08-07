@@ -102,6 +102,7 @@ class ContextExportResponse(BaseModel):
     ]
     objective_id: str = Field(min_length=1)
     context_zip_path: str = Field(min_length=1)
+    upload_zip_path: str = Field(min_length=1)
     indexed_source_count: int = Field(ge=0)
     chunk_count: int = Field(ge=0)
     collection_name: Literal["sbm_contexts"]

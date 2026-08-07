@@ -115,6 +115,67 @@ def _section_hashes(markdown: str) -> dict[str, str]:
     return hashes
 
 
+def create_context_upload_package(
+    output_directory: Path,
+    context_zip_path: Path,
+    response_payload: dict,
+) -> Path:
+    destination = output_directory / "context-deploy-package.zip"
+    sys_prompt_path = output_directory / "SYS_PROMPT.md"
+
+    if not context_zip_path.is_file() or context_zip_path.is_symlink():
+        raise ValueError("context-package.zip must be a regular file")
+    if not sys_prompt_path.is_file() or sys_prompt_path.is_symlink():
+        raise ValueError("SYS_PROMPT.md must be a regular file")
+
+    response_json = json.dumps(
+        response_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ) + "\n"
+
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=output_directory,
+            prefix=".context-deploy-package-",
+            suffix=".zip",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+
+        with ZipFile(
+            temporary_path,
+            mode="w",
+            compression=ZIP_DEFLATED,
+        ) as archive:
+            archive.writestr(
+                "context-export-response.json",
+                response_json,
+            )
+            archive.write(
+                context_zip_path,
+                arcname="context-package.zip",
+            )
+            archive.write(
+                sys_prompt_path,
+                arcname="SYS_PROMPT.md",
+            )
+
+        os.replace(temporary_path, destination)
+        temporary_path = None
+        return destination
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Unable to remove temporary upload ZIP: %s",
+                    temporary_path,
+                )
+
+
 def create_context_package(
     output_directory: Path,
     project_name: str,
