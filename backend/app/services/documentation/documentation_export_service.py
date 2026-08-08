@@ -382,6 +382,25 @@ def export_documentation(
             DocumentationExportInfrastructureError("Documentation indexing failed")
         ) from exc
 
+    documentation_paths = sorted(
+        {source.archive_path for source in sources}
+    )
+    documentation_targets = _normalize_requested_paths(
+        request.documentation_targets or []
+    )
+    unknown_documentation_targets = sorted(
+        set(documentation_targets)
+        - set(documentation_paths)
+    )
+
+    if unknown_documentation_targets:
+        raise ContextValidationError(
+            "Unknown documentation_targets: "
+            + ", ".join(
+                unknown_documentation_targets
+            )
+        )
+
     try:
         requested_changed_files = (
             request.changed_files
@@ -402,8 +421,6 @@ def export_documentation(
         qa_results = request.qa_results or ""
         change_summary = request.change_summary or ""
         project_tree = _collect_project_tree(paths.project_root)
-
-        documentation_paths = sorted({source.archive_path for source in sources})
 
         query = build_documentation_query(
             project_name=project_name,
@@ -426,6 +443,7 @@ def export_documentation(
             query=query,
             top_k=(DOCUMENTATION_EXPORT_TOP_K),
             allowed_archive_paths=documentation_paths,
+            required_archive_paths=documentation_targets,
         )
 
         # Usa los contextos enviados o los recupera desde sbm_contexts

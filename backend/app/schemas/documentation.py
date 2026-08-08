@@ -26,6 +26,7 @@ class DocumentationExportRequest(BaseModel):
     git_diff: Optional[str] = None
     qa_results: Optional[str] = None
     retrieved_context_chunks: Optional[List[RetrievedContextChunk]] = None
+    documentation_targets: Optional[List[str]] = None
 
     @field_validator(
         "project_root",
@@ -44,9 +45,9 @@ class DocumentationExportRequest(BaseModel):
 
         return value
 
-    @field_validator("changed_files")
+    @field_validator("changed_files", "documentation_targets")
     @classmethod
-    def validate_changed_files(
+    def validate_path_list(
         cls,
         value: Optional[List[str]],
     ) -> Optional[List[str]]:
@@ -61,7 +62,7 @@ class DocumentationExportRequest(BaseModel):
 
         if len(normalized) != len(set(normalized)):
             raise ValueError(
-                "changed_files must not contain duplicates"
+                "path list must not contain duplicates"
             )
 
         return normalized

@@ -16,6 +16,7 @@ services:
       - ../../context:/suite/context
       - ../../dp/DP-API:/suite/dp/DP-API
       - ../SBM-API:/suite/sbm/SBM-API
+      - ../SBM-DB:/suite/sbm/SBM-DB
       - ../SBM-MANAGER:/suite/sbm/SBM-MANAGER
       - .:/suite/sbm/sbm-ai-assistant
     depends_on:

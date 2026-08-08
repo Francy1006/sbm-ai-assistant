@@ -817,6 +817,7 @@ class ContextContractMappingTests(unittest.TestCase):
                 "dp-api": "/suite/dp/DP-API",
                 "sbm-ai-assistant": "/suite/sbm/sbm-ai-assistant",
                 "sbm-api": "/suite/sbm/SBM-API",
+                "sbm-db": "/suite/sbm/SBM-DB",
                 "sbm-manager": "/suite/sbm/SBM-MANAGER",
             },
         )
@@ -832,6 +833,9 @@ class ContextContractMappingTests(unittest.TestCase):
 
     def test_concrete_sbm_manager_project_mappings_are_accepted(self):
         validate_format_context(_valid_format_contract("sbm-manager"))
+
+    def test_concrete_sbm_db_project_mappings_are_accepted(self):
+        validate_format_context(_valid_format_contract("sbm-db"))
 
     def test_incorrect_project_mapping_is_rejected(self):
         contract = _valid_format_contract("dp-api").replace(
@@ -1547,6 +1551,7 @@ class ProjectAllowlistTests(unittest.TestCase):
         projects = (
             ("dp-api", "dp", "DP-API"),
             ("sbm-api", "sbm", "SBM-API"),
+            ("sbm-db", "sbm", "SBM-DB"),
             ("sbm-manager", "sbm", "SBM-MANAGER"),
             ("sbm-ai-assistant", "sbm", "sbm-ai-assistant"),
         )

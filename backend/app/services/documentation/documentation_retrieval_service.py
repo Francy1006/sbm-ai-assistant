@@ -298,6 +298,7 @@ def build_documentation_query(
 def _scope_filter(
     project_name: str,
     global_scope: bool,
+    archive_path: str | None = None,
 ) -> Filter:
     repository_condition = FieldCondition(
         key="repository",
@@ -323,6 +324,16 @@ def _scope_filter(
             match=MatchValue(value=True),
         ),
     ]
+
+    if archive_path:
+        must.append(
+            FieldCondition(
+                key="archive_path",
+                match=MatchValue(
+                    value=archive_path
+                ),
+            )
+        )
 
     if global_scope:
         must.append(repository_condition)
@@ -355,6 +366,7 @@ def retrieve_relevant_documentation_chunks(
     query: str,
     top_k: int = DOCUMENTATION_EXPORT_TOP_K,
     allowed_archive_paths: list[str] | None = None,
+    required_archive_paths: list[str] | None = None,
 ) -> list[RetrievedContextChunk]:
     normalized_project_name = project_name.strip()
     normalized_query = query.strip()
@@ -379,6 +391,27 @@ def retrieve_relevant_documentation_chunks(
         for path in (allowed_archive_paths or [])
         if path and path.strip()
     }
+    required_paths = {
+        path.strip()
+        for path in (required_archive_paths or [])
+        if path and path.strip()
+    }
+
+    if required_paths and not allowed_paths:
+        raise ValueError(
+            "required_archive_paths require allowed_archive_paths"
+        )
+
+    if not required_paths.issubset(allowed_paths):
+        raise ValueError(
+            "required_archive_paths must be a subset of "
+            "allowed_archive_paths"
+        )
+
+    if len(required_paths) > top_k:
+        raise ValueError(
+            "required_archive_paths cannot exceed top_k"
+        )
 
     vector = create_embedding(
         normalized_query
@@ -457,5 +490,117 @@ def retrieve_relevant_documentation_chunks(
 
         if len(unique_chunks) >= top_k:
             break
+
+    represented_paths = {
+        chunk.archive_path
+        for chunk in unique_chunks
+    }
+
+    for required_path in sorted(
+        required_paths - represented_paths
+    ):
+        targeted_candidates = []
+
+        for global_scope in (True, False):
+            targeted_candidates.extend(
+                search_similar(
+                    vector=vector,
+                    limit=1,
+                    collection_name=(
+                        DOCUMENTATION_COLLECTION_NAME
+                    ),
+                    query_filter=_scope_filter(
+                        project_name=(
+                            normalized_project_name
+                        ),
+                        global_scope=global_scope,
+                        archive_path=required_path,
+                    ),
+                )
+            )
+
+        targeted_candidates.sort(
+            key=lambda point: point.score,
+            reverse=True,
+        )
+
+        selected = None
+
+        for point in targeted_candidates:
+            payload = point.payload or {}
+
+            if (
+                payload.get("archive_path", "")
+                != required_path
+            ):
+                continue
+
+            key = _deduplication_key(point)
+
+            if key in seen:
+                continue
+
+            selected = RetrievedContextChunk(
+                point_id=str(point.id),
+                source_path=payload.get(
+                    "source_path",
+                    "",
+                ),
+                archive_path=payload.get(
+                    "archive_path",
+                    "",
+                ),
+                section=payload.get(
+                    "section",
+                    "",
+                ),
+                score=float(point.score),
+                content=payload.get(
+                    "text",
+                    "",
+                ),
+            )
+            seen.add(key)
+            break
+
+        if selected is None:
+            raise ValueError(
+                "Required documentation target was not retrieved: "
+                f"{required_path}"
+            )
+
+        if len(unique_chunks) >= top_k:
+            removable_index = next(
+                (
+                    index
+                    for index in range(
+                        len(unique_chunks) - 1,
+                        -1,
+                        -1,
+                    )
+                    if (
+                        unique_chunks[index].archive_path
+                        not in required_paths
+                    )
+                ),
+                None,
+            )
+
+            if removable_index is None:
+                raise ValueError(
+                    "Unable to reserve retrieval slot for required "
+                    "documentation target: "
+                    f"{required_path}"
+                )
+
+            unique_chunks.pop(removable_index)
+
+        unique_chunks.append(selected)
+        represented_paths.add(required_path)
+
+    unique_chunks.sort(
+        key=lambda chunk: chunk.score,
+        reverse=True,
+    )
 
     return unique_chunks

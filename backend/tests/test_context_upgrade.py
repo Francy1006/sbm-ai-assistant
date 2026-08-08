@@ -932,6 +932,7 @@ class ContextUpgradeTests(unittest.TestCase):
         projects = (
             ("dp-api", "dp", "DP-API"),
             ("sbm-api", "sbm", "SBM-API"),
+            ("sbm-db", "sbm", "SBM-DB"),
             ("sbm-manager", "sbm", "SBM-MANAGER"),
             ("sbm-ai-assistant", "sbm", "sbm-ai-assistant"),
         )
