@@ -34,6 +34,7 @@ class ProjectLocation:
 PROJECT_ALLOWLIST = {
     "dp-api": ProjectLocation("dp-api", "dp", "DP-API"),
     "sbm-api": ProjectLocation("sbm-api", "sbm", "SBM-API"),
+    "sbm-manager": ProjectLocation("sbm-manager", "sbm", "SBM-MANAGER"),
     "sbm-ai-assistant": ProjectLocation(
         "sbm-ai-assistant",
         "sbm",

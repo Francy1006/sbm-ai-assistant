@@ -926,12 +926,13 @@ class ContextUpgradeTests(unittest.TestCase):
                 [item["original_path"] for item in backup_manifest["backed_up_files"]],
                 [GLOBAL_PROJECT],
             )
-            self.assertFalse((env.suite_root / "backups").exists())
+            self.assertFalse((env.suite_root / "backup").exists())
 
     def test_all_allowlisted_projects_can_apply_their_own_patch(self):
         projects = (
             ("dp-api", "dp", "DP-API"),
             ("sbm-api", "sbm", "SBM-API"),
+            ("sbm-manager", "sbm", "SBM-MANAGER"),
             ("sbm-ai-assistant", "sbm", "sbm-ai-assistant"),
         )
         for project_name, brand, directory_name in projects:

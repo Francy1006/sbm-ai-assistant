@@ -231,7 +231,7 @@ class DocumentationUpgradeTests(unittest.TestCase):
                 [item["archive_path"] for item in backup_manifest["backed_up_files"]],
                 [ARCHITECTURE],
             )
-            self.assertFalse((env.documentation_root / "backups").exists())
+            self.assertFalse((env.documentation_root / "backup").exists())
 
     def test_multiple_documentation_files_can_be_replaced(self):
         with tempfile.TemporaryDirectory() as temp:

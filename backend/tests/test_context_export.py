@@ -817,6 +817,7 @@ class ContextContractMappingTests(unittest.TestCase):
                 "dp-api": "/suite/dp/DP-API",
                 "sbm-ai-assistant": "/suite/sbm/sbm-ai-assistant",
                 "sbm-api": "/suite/sbm/SBM-API",
+                "sbm-manager": "/suite/sbm/SBM-MANAGER",
             },
         )
 
@@ -828,6 +829,9 @@ class ContextContractMappingTests(unittest.TestCase):
 
     def test_concrete_sbm_ai_assistant_project_mappings_are_accepted(self):
         validate_format_context(_valid_format_contract("sbm-ai-assistant"))
+
+    def test_concrete_sbm_manager_project_mappings_are_accepted(self):
+        validate_format_context(_valid_format_contract("sbm-manager"))
 
     def test_incorrect_project_mapping_is_rejected(self):
         contract = _valid_format_contract("dp-api").replace(
@@ -1539,10 +1543,11 @@ class ContextApplicationTests(unittest.TestCase):
 
 
 class ProjectAllowlistTests(unittest.TestCase):
-    def test_all_three_projects_resolve_with_brand_paths(self):
+    def test_all_allowlisted_projects_resolve_with_brand_paths(self):
         projects = (
             ("dp-api", "dp", "DP-API"),
             ("sbm-api", "sbm", "SBM-API"),
+            ("sbm-manager", "sbm", "SBM-MANAGER"),
             ("sbm-ai-assistant", "sbm", "sbm-ai-assistant"),
         )
         with tempfile.TemporaryDirectory() as temporary_directory:

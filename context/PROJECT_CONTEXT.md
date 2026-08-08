@@ -3239,7 +3239,7 @@ Los routers están en `backend/app/api/routes/contexts.py` y `backend/app/api/ro
 
 ### 24.3 Backup único y atomicidad
 
-Los upgrades usan exclusivamente `/suite/context/backup/<timestamp>_<project>/`; no existe un directorio operativo `backups`. Cada ejecución guarda los originales, `EXECUTIVE_README.md`, `COMMIT_MESSAGE.md` y `BACKUP_MANIFEST.json`. El manifiesto registra proyecto, workflow, fecha, razón, rutas originales/de backup, hashes SHA-256 y la lista exacta respaldada.
+Los upgrades usan exclusivamente `/suite/context/backup/<timestamp>_<project>/`; no existe un directorio operativo `backup`. Cada ejecución guarda los originales, `EXECUTIVE_README.md`, `COMMIT_MESSAGE.md` y `BACKUP_MANIFEST.json`. El manifiesto registra proyecto, workflow, fecha, razón, rutas originales/de backup, hashes SHA-256 y la lista exacta respaldada.
 
 El orden obligatorio es validar y construir todos los documentos staged, crear el backup, efectuar reemplazos atómicos y borrar el ZIP solamente al finalizar. Si un reemplazo falla, se restauran todos los archivos ya modificados y se conserva el input.
 
