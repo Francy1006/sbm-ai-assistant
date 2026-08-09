@@ -112,6 +112,15 @@ def _write_markdown(path: Path, title: str):
     path.write_text(content, encoding="utf-8")
 
 
+def _export_contexts_at(request: ContextExportRequest, suite_root: Path):
+    with patch(
+        "app.services.contexts.context_export_service."
+        "CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT",
+        str(suite_root / "context"),
+    ):
+        return export_contexts(request)
+
+
 class ContextExportEndpointTests(unittest.TestCase):
     def test_contract_endpoint_uses_runtime_registry(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -162,18 +171,14 @@ class ContextExportEndpointTests(unittest.TestCase):
                 project_name="dp-api",
                 workflow="context-deploy",
                 lifecycle_phase="implementation-progress",
-                objective_id="OBJ-001",
-                project_root=str(project_root),
-                source_context_root=str(suite_root),
-                format_context_path=str(format_path),
-                output_directory=str(output_root),
+                objectives=[{"objective_id": "OBJ-001"}],
             )
 
             with self.assertRaisesRegex(
                 ContextValidationError,
                 "FORMAT_CONTEXT.md/backend contract divergence",
             ):
-                export_contexts(request)
+                _export_contexts_at(request, suite_root)
 
 
     def test_endpoint_exports_only_allowlisted_files_and_manifest(self):
@@ -223,13 +228,8 @@ class ContextExportEndpointTests(unittest.TestCase):
                 "project_name": "dp-api",
                 "workflow": "context-deploy",
                 "lifecycle_phase": "implementation-progress",
-                "objective_id": "OBJ-001",
-                "project_root": str(project_root),
-                "source_context_root": str(suite_root),
-                "format_context_path": str(
-                    suite_root / "context/FORMAT_CONTEXT.md"
-                ),
-                "output_directory": str(output_directory),
+                "execution_mode": "evidence",
+                "objectives": [{"objective_id": "OBJ-001"}],
                 "change_summary": "Actualizar exportación RAG.",
                 "changed_files": ["backend/app/export.py"],
                 "git_diff": "diff --git a/export.py b/export.py",
@@ -283,6 +283,11 @@ class ContextExportEndpointTests(unittest.TestCase):
                     "_collect_git_log",
                     return_value="abc123 Cambio",
                 ),
+                patch(
+                    "app.services.contexts.context_export_service."
+                    "CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT",
+                    str(suite_root / "context"),
+                ),
             ):
                 response = TestClient(app).post(
                     "/contexts/export",
@@ -296,14 +301,15 @@ class ContextExportEndpointTests(unittest.TestCase):
                 payload["lifecycle_phase"],
                 "implementation-progress",
             )
-            self.assertEqual(payload["objective_id"], "OBJ-001")
+            self.assertEqual(payload["execution_mode"], "evidence")
+            self.assertEqual(payload["objectives"], [{"objective_id": "OBJ-001"}])
             self.assertEqual(payload["indexed_source_count"], 15)
             self.assertEqual(payload["collection_name"], "sbm_contexts")
             self.assertEqual(payload["errors"], [])
             self.assertTrue(payload["upload_zip_path"].endswith(
                 "context-deploy-package.zip"
             ))
-            with ZipFile(payload["upload_zip_path"]) as upload_archive:
+            with ZipFile(suite_root / payload["upload_zip_path"]) as upload_archive:
                 self.assertEqual(
                     set(upload_archive.namelist()),
                     {
@@ -348,7 +354,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                 },
             )
 
-            with ZipFile(payload["context_zip_path"]) as archive:
+            with ZipFile(suite_root / payload["context_zip_path"]) as archive:
                 names = set(archive.namelist())
                 expected_names = {
                     "retrieved-context.md",
@@ -399,13 +405,14 @@ class ContextExportEndpointTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     manifest["canonical_project_path"],
-                    "/suite/dp/DP-API",
+                    "SBM-SUITE/dp/DP-API",
                 )
                 self.assertEqual(
                     manifest["lifecycle_phase"],
                     "implementation-progress",
                 )
-                self.assertEqual(manifest["objective_id"], "OBJ-001")
+                self.assertEqual(manifest["execution_mode"], "evidence")
+                self.assertEqual(manifest["objectives"][0]["objective_id"], "OBJ-001")
                 self.assertEqual(
                     set(manifest["full_target_files"]),
                     set(manifest["target_content_hashes"]),
@@ -597,13 +604,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                 project_name="dp-api",
                 workflow="context-deploy",
                 lifecycle_phase="implementation-progress",
-                objective_id="OBJ-001",
-                project_root=str(project_root),
-                source_context_root=str(suite_root),
-                format_context_path=str(
-                    suite_root / "context/FORMAT_CONTEXT.md"
-                ),
-                output_directory=str(output_directory),
+                objectives=[{"objective_id": "OBJ-001"}],
                 changed_files=[],
                 git_diff="",
                 qa_results="",
@@ -626,9 +627,9 @@ class ContextExportEndpointTests(unittest.TestCase):
                     return_value="",
                 ),
             ):
-                response = export_contexts(request)
+                response = _export_contexts_at(request, suite_root)
 
-            with ZipFile(response.context_zip_path) as archive:
+            with ZipFile(suite_root / response.context_zip_path) as archive:
                 self.assertNotIn("project-tree.txt", archive.namelist())
                 manifest = json.loads(archive.read("manifest.json"))
                 self.assertEqual(
@@ -670,13 +671,7 @@ class ContextExportEndpointTests(unittest.TestCase):
                 project_name="dp-api",
                 workflow="context-deploy",
                 lifecycle_phase="implementation-progress",
-                objective_id="OBJ-001",
-                project_root=str(project_root),
-                source_context_root=str(suite_root),
-                format_context_path=str(
-                    suite_root / "context/FORMAT_CONTEXT.md"
-                ),
-                output_directory=str(output_directory),
+                objectives=[{"objective_id": "OBJ-001"}],
                 changed_files=[],
                 git_diff="",
                 qa_results="",
@@ -695,57 +690,121 @@ class ContextExportEndpointTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaises(Exception):
-                    export_contexts(request)
+                    _export_contexts_at(request, suite_root)
 
 
 class ContextExportRequestTests(unittest.TestCase):
+    @staticmethod
+    def _planning_objective(objective_id: str = "OBJ-001") -> dict:
+        return {
+            "objective_id": objective_id,
+            "objective": f"Objective {objective_id}",
+            "status": "pending",
+            "priority": 5,
+            "target_date": "N/A",
+            "branch": "FEATURE-enable-material",
+        }
+
     def _request(self, lifecycle_phase: str, user_prompt=None):
+        objectives = (
+            [self._planning_objective()]
+            if lifecycle_phase == "planning-activation"
+            else [{"objective_id": "OBJ-001"}]
+        )
         return ContextExportRequest(
             project_name="dp-api",
             workflow="context-deploy",
             lifecycle_phase=lifecycle_phase,
-            objective_id="OBJ-001",
-            project_root="/suite/dp/DP-API",
-            source_context_root="/suite/context",
-            format_context_path="/suite/context/FORMAT_CONTEXT.md",
-            output_directory="/suite/context/output",
+            execution_mode=(
+                "user-guided"
+                if user_prompt and user_prompt.strip()
+                else "evidence"
+            ),
+            objectives=objectives,
             user_prompt=user_prompt,
         )
 
-    def test_planning_without_user_prompt_is_rejected(self):
-        with self.assertRaisesRegex(
-            ValueError,
-            "user_prompt is required for planning-activation",
-        ):
-            self._request("planning-activation")
+    def test_planning_without_user_prompt_is_accepted(self):
+        request = self._request("planning-activation")
+        self.assertIsNone(request.user_prompt)
+        self.assertEqual(request.execution_mode, "evidence")
 
-    def test_planning_with_empty_user_prompt_is_rejected(self):
-        with self.assertRaisesRegex(
-            ValueError,
-            "user_prompt is required for planning-activation",
-        ):
-            self._request("planning-activation", "   ")
-
-    def test_planning_with_user_prompt_is_accepted(self):
+    def test_user_prompt_requires_user_guided_execution_mode(self):
         request = self._request(
             "planning-activation",
-            "Activate the requested objective.",
+            "Create the confirmed objective batch.",
         )
+        self.assertEqual(request.execution_mode, "user-guided")
 
-        self.assertEqual(
-            request.user_prompt,
-            "Activate the requested objective.",
+        with self.assertRaisesRegex(ValueError, "execution_mode must be"):
+            ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="planning-activation",
+                execution_mode="evidence",
+                objectives=[self._planning_objective()],
+                user_prompt="Create the confirmed objective batch.",
+            )
+
+    def test_user_guided_requires_user_prompt(self):
+        with self.assertRaisesRegex(ValueError, "execution_mode must be"):
+            ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="planning-activation",
+                execution_mode="user-guided",
+                objectives=[self._planning_objective()],
+            )
+
+    def test_planning_batch_is_accepted(self):
+        request = ContextExportRequest(
+            project_name="dp-api",
+            workflow="context-deploy",
+            lifecycle_phase="planning-activation",
+            objectives=[
+                self._planning_objective("OBJ-001"),
+                {
+                    **self._planning_objective("OBJ-002"),
+                    "branch": "FEATURE-enable-orders",
+                },
+            ],
         )
+        self.assertEqual(len(request.objectives), 2)
 
-    def test_progress_with_null_user_prompt_is_accepted(self):
-        request = self._request("implementation-progress", None)
+    def test_planning_rejects_missing_required_field_in_any_objective(self):
+        invalid = self._planning_objective("OBJ-002")
+        invalid.pop("priority")
+        with self.assertRaisesRegex(ValueError, "missing required planning fields"):
+            ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="planning-activation",
+                objectives=[self._planning_objective(), invalid],
+            )
 
-        self.assertIsNone(request.user_prompt)
+    def test_planning_rejects_duplicate_objective_ids(self):
+        with self.assertRaisesRegex(ValueError, "duplicate objective_id"):
+            ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="planning-activation",
+                objectives=[
+                    self._planning_objective(),
+                    self._planning_objective(),
+                ],
+            )
 
-    def test_closure_with_null_user_prompt_is_accepted(self):
-        request = self._request("implementation-closure", None)
-
-        self.assertIsNone(request.user_prompt)
+    def test_progress_rejects_multiple_objectives(self):
+        with self.assertRaisesRegex(ValueError, "exactly one objective"):
+            ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="implementation-progress",
+                objectives=[
+                    {"objective_id": "OBJ-001"},
+                    {"objective_id": "OBJ-002"},
+                ],
+            )
 
     def test_closure_null_user_prompt_does_not_return_http_422(self):
         app = FastAPI()
@@ -755,9 +814,10 @@ class ContextExportRequestTests(unittest.TestCase):
             project_name="dp-api",
             workflow="context-deploy",
             lifecycle_phase="implementation-closure",
-            objective_id="OBJ-001",
-            context_zip_path="/suite/context/output/context-package.zip",
-            upload_zip_path="/suite/context/output/context-deploy-package.zip",
+            execution_mode="evidence",
+            objectives=[{"objective_id": "OBJ-001"}],
+            context_zip_path="context/output/context-package.zip",
+            upload_zip_path="context/output/context-deploy-package.zip",
             indexed_source_count=0,
             chunk_count=0,
             collection_name="sbm_contexts",
@@ -781,12 +841,16 @@ class ContextExportRequestTests(unittest.TestCase):
             response.json()["lifecycle_phase"],
             "implementation-closure",
         )
-        self.assertEqual(response.json()["objective_id"], "OBJ-001")
+        self.assertEqual(response.json()["execution_mode"], "evidence")
+        self.assertEqual(
+            response.json()["objectives"][0]["objective_id"],
+            "OBJ-001",
+        )
 
 
 class ContextContractMappingTests(unittest.TestCase):
     def test_runtime_and_repository_paths_are_distinct_and_convertible(self):
-        self.assertEqual(canonical_projects()["dp-api"], "/suite/dp/DP-API")
+        self.assertEqual(canonical_projects()["dp-api"], "SBM-SUITE/dp/DP-API")
         self.assertEqual(
             patch_target_file("patches/project-context.json", "dp-api"),
             "SBM-SUITE/dp/DP-API/context/PROJECT_CONTEXT.md",
@@ -810,15 +874,15 @@ class ContextContractMappingTests(unittest.TestCase):
         with self.assertRaises(ProjectRegistryError):
             repository_to_runtime_path("/suite/dp/DP-API")
 
-    def test_all_canonical_projects_use_runtime_paths(self):
+    def test_all_canonical_projects_use_repository_relative_paths(self):
         self.assertEqual(
             canonical_projects(),
             {
-                "dp-api": "/suite/dp/DP-API",
-                "sbm-ai-assistant": "/suite/sbm/sbm-ai-assistant",
-                "sbm-api": "/suite/sbm/SBM-API",
-                "sbm-db": "/suite/sbm/SBM-DB",
-                "sbm-manager": "/suite/sbm/SBM-MANAGER",
+                "dp-api": "SBM-SUITE/dp/DP-API",
+                "sbm-ai-assistant": "SBM-SUITE/sbm/sbm-ai-assistant",
+                "sbm-api": "SBM-SUITE/sbm/SBM-API",
+                "sbm-db": "SBM-SUITE/sbm/SBM-DB",
+                "sbm-manager": "SBM-SUITE/sbm/SBM-MANAGER",
             },
         )
 
@@ -1516,13 +1580,7 @@ class ContextApplicationTests(unittest.TestCase):
                 project_name="dp-api",
                 workflow="context-deploy",
                 lifecycle_phase="implementation-progress",
-                objective_id="OBJ-001",
-                project_root=str(project_root),
-                source_context_root=str(suite_root),
-                format_context_path=str(
-                    suite_root / "context/FORMAT_CONTEXT.md"
-                ),
-                output_directory=str(suite_root / "output"),
+                objectives=[{"objective_id": "OBJ-001"}],
             )
 
             with (
@@ -1543,7 +1601,7 @@ class ContextApplicationTests(unittest.TestCase):
                     ContextValidationError,
                     "Missing mandatory full target files",
                 ):
-                    export_contexts(request)
+                    _export_contexts_at(request, suite_root)
 
 
 class ProjectAllowlistTests(unittest.TestCase):

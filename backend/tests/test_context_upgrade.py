@@ -259,7 +259,8 @@ class UpgradeEnvironment:
         directory_name: str = "DP-API",
     ):
         self.project_name = project_name
-        self.suite_root = root / "SBM-SUITE" / "context"
+        self.repository_root = root / "SBM-SUITE"
+        self.suite_root = self.repository_root / "context"
         self.project_root = root / "SBM-SUITE" / brand / directory_name
         self.input_directory = self.suite_root / "input"
         self.backup_root = self.suite_root / "backup"
@@ -371,6 +372,7 @@ def _create_upgrade_zip(
     project_name: str = "dp-api",
     lifecycle_phase: str = "implementation-progress",
     objective_id: str | None = "OBJ-001",
+    objectives: list[dict] | None = None,
 ) -> None:
     files = {
         EXECUTIVE_README: "Context upgrade summary\n",
@@ -379,6 +381,23 @@ def _create_upgrade_zip(
     }
     if user_prompt is not None:
         files[USER_PROMPT] = user_prompt
+
+    if objectives is None:
+        if objective_id is None:
+            objectives = []
+        elif lifecycle_phase == "planning-activation":
+            objectives = [
+                {
+                    "objective_id": objective_id,
+                    "objective": "Enable Material",
+                    "status": "active",
+                    "priority": 5,
+                    "target_date": "N/A",
+                    "branch": "FEATURE-enable-material",
+                }
+            ]
+        else:
+            objectives = [{"objective_id": objective_id}]
 
     manifest = {
         "project_name": project_name,
@@ -389,7 +408,7 @@ def _create_upgrade_zip(
         "supported_patch_paths": supported_patch_paths(),
         "canonical_project_path": canonical_project_path(project_name),
         "lifecycle_phase": lifecycle_phase,
-        "objective_id": objective_id,
+        "objectives": objectives,
         "execution_mode": execution_mode,
         "user_prompt_file": USER_PROMPT if user_prompt is not None else None,
         "output_filename": "context-upgrade.zip",
@@ -642,7 +661,7 @@ class ContextUpgradeTests(unittest.TestCase):
                 lifecycle_phase="implementation-closure",
                 objective_id=None,
             )
-            with self.assertRaisesRegex(ContextValidationError, "objective_id"):
+            with self.assertRaisesRegex(ContextValidationError, "objectives"):
                 env.run()
 
     def test_closure_without_completed_patch_is_rejected(self):
@@ -911,7 +930,7 @@ class ContextUpgradeTests(unittest.TestCase):
             self.assertIn("New suite purpose.", target.read_text(encoding="utf-8"))
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), old_mode)
 
-            backup = Path(response.backup_directory)
+            backup = env.repository_root / response.backup_directory
             self.assertTrue((backup / "previous" / GLOBAL_PROJECT).is_file())
             self.assertTrue((backup / "applied" / GLOBAL_PROJECT).is_file())
             self.assertTrue((backup / GLOBAL_PROJECT_PATCH).is_file())
@@ -926,7 +945,6 @@ class ContextUpgradeTests(unittest.TestCase):
                 [item["original_path"] for item in backup_manifest["backed_up_files"]],
                 [GLOBAL_PROJECT],
             )
-            self.assertFalse((env.suite_root / "backup").exists())
 
     def test_all_allowlisted_projects_can_apply_their_own_patch(self):
         projects = (
@@ -1098,7 +1116,7 @@ class ContextUpgradeTests(unittest.TestCase):
             )
 
             response = env.run()
-            backup = Path(response.backup_directory)
+            backup = env.repository_root / response.backup_directory
 
             self.assertEqual(
                 (backup / USER_PROMPT).read_text(encoding="utf-8"),
@@ -1117,7 +1135,7 @@ class ContextUpgradeTests(unittest.TestCase):
                         "## 3. Active objectives\n\n"
                         "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
                         "|---|---|---|---:|---|---|---|\n"
-                        "| OBJ-001 | Enable Material | active | 5 |  | FEATURE-enable-material | N/A |\n",
+                        "| OBJ-001 | Enable Material | active | 5 | N/A | FEATURE-enable-material | N/A |\n",
                     )
                 },
                 execution_mode="user-guided",
@@ -1143,7 +1161,7 @@ class ContextUpgradeTests(unittest.TestCase):
                         "## 3. Active objectives\n\n"
                         "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
                         "|---|---|---|---|---:|---|---|---|\n"
-                        "| OBJ-001 | DP-API | Enable Material | active | 5 |  | FEATURE-enable-material | N/A |\n",
+                        "| OBJ-001 | DP-API | Enable Material | active | 5 | N/A | FEATURE-enable-material | N/A |\n",
                     ),
                     PROJECT_CONTEXT_PATCH: _replace_patch(
                         PROJECT_CONTEXT,
@@ -1151,7 +1169,7 @@ class ContextUpgradeTests(unittest.TestCase):
                         "## 3. Active objectives\n\n"
                         "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
                         "|---|---|---|---:|---|---|---|\n"
-                        "| OBJ-001 | Enable Material | active | 5 |  | FEATURE-enable-material | N/A |\n",
+                        "| OBJ-001 | Enable Material | active | 5 | N/A | FEATURE-enable-material | N/A |\n",
                     ),
                 },
                 execution_mode="user-guided",
@@ -1175,6 +1193,127 @@ class ContextUpgradeTests(unittest.TestCase):
                     encoding="utf-8"
                 ),
             )
+
+    def test_planning_activation_applies_multiple_pending_objectives_atomically(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objectives = [
+                {
+                    "objective_id": "OBJ-001",
+                    "objective": "Enable Material",
+                    "status": "pending",
+                    "priority": 5,
+                    "target_date": "N/A",
+                    "branch": "FEATURE-enable-material",
+                },
+                {
+                    "objective_id": "OBJ-002",
+                    "objective": "Enable Orders",
+                    "status": "pending",
+                    "priority": 4,
+                    "target_date": "2026-08-20",
+                    "branch": "FEATURE-enable-orders",
+                },
+            ]
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 4. Pending objectives",
+                        "## 4. Pending objectives\n\n"
+                        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | DP-API | Enable Material | pending | 5 | N/A | FEATURE-enable-material | N/A |\n"
+                        "| OBJ-002 | DP-API | Enable Orders | pending | 4 | 2026-08-20 | FEATURE-enable-orders | N/A |\n",
+                    ),
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 4. Pending objectives",
+                        "## 4. Pending objectives\n\n"
+                        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | Enable Material | pending | 5 | N/A | FEATURE-enable-material | N/A |\n"
+                        "| OBJ-002 | Enable Orders | pending | 4 | 2026-08-20 | FEATURE-enable-orders | N/A |\n",
+                    ),
+                },
+                lifecycle_phase="planning-activation",
+                objectives=objectives,
+            )
+
+            response = env.run()
+            self.assertEqual(
+                response.updated_files,
+                sorted([GLOBAL_PROJECT, PROJECT_CONTEXT]),
+            )
+            global_context = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            local_context = (
+                env.project_root / "context/PROJECT_CONTEXT.md"
+            ).read_text(encoding="utf-8")
+            for objective in objectives:
+                self.assertEqual(
+                    global_context.count(objective["objective_id"]),
+                    1,
+                )
+                self.assertEqual(
+                    local_context.count(objective["objective_id"]),
+                    1,
+                )
+
+    def test_planning_activation_rejects_field_divergence_in_batch(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objectives = [
+                {
+                    "objective_id": "OBJ-001",
+                    "objective": "Enable Material",
+                    "status": "pending",
+                    "priority": 5,
+                    "target_date": "N/A",
+                    "branch": "FEATURE-enable-material",
+                },
+                {
+                    "objective_id": "OBJ-002",
+                    "objective": "Enable Orders",
+                    "status": "pending",
+                    "priority": 4,
+                    "target_date": "N/A",
+                    "branch": "FEATURE-enable-orders",
+                },
+            ]
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 4. Pending objectives",
+                        "## 4. Pending objectives\n\n"
+                        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | DP-API | Enable Material | pending | 5 | N/A | FEATURE-enable-material | N/A |\n"
+                        "| OBJ-002 | DP-API | WRONG DESCRIPTION | pending | 4 | N/A | FEATURE-enable-orders | N/A |\n",
+                    ),
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 4. Pending objectives",
+                        "## 4. Pending objectives\n\n"
+                        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | Enable Material | pending | 5 | N/A | FEATURE-enable-material | N/A |\n"
+                        "| OBJ-002 | Enable Orders | pending | 4 | N/A | FEATURE-enable-orders | N/A |\n",
+                    ),
+                },
+                lifecycle_phase="planning-activation",
+                objectives=objectives,
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "diverges from manifest.objectives",
+            ):
+                env.run()
 
     def test_completed_objective_requires_global_and_project_context_patches(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1481,7 +1620,7 @@ class ContextUpgradeTests(unittest.TestCase):
             ):
                 env.run()
 
-    def test_repository_path_in_runtime_manifest_field_is_rejected(self):
+    def test_absolute_runtime_path_in_manifest_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
             _create_upgrade_zip(
@@ -1494,7 +1633,7 @@ class ContextUpgradeTests(unittest.TestCase):
                     )
                 },
                 manifest_updates={
-                    "canonical_project_path": "SBM-SUITE/dp/DP-API"
+                    "canonical_project_path": "/suite/dp/DP-API"
                 },
             )
 

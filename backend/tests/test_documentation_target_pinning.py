@@ -101,11 +101,6 @@ class DocumentationTargetPinningTests(unittest.TestCase):
             DocumentationExportRequest(
                 project_name="sbm-db",
                 workflow="documentation-deploy",
-                project_root="/tmp/project",
-                documentation_root="/tmp/documentation",
-                format_context_path="/tmp/FORMAT_CONTEXT.md",
-                system_prompt_path="/tmp/SYS_PROMPT.md",
-                output_directory="/tmp/output",
                 documentation_targets=[
                     "documentation/pages/sbm-suite.md",
                     "documentation/pages/sbm-suite.md",
@@ -144,15 +139,6 @@ class DocumentationTargetPinningTests(unittest.TestCase):
             request = DocumentationExportRequest(
                 project_name="sbm-db",
                 workflow="documentation-deploy",
-                project_root=str(project_root),
-                documentation_root=str(documentation_root),
-                format_context_path=str(
-                    documentation_root / "FORMAT_CONTEXT.md"
-                ),
-                system_prompt_path=str(
-                    documentation_root / "SYS_PROMPT.md"
-                ),
-                output_directory=str(output_directory),
                 changed_files=[],
                 git_diff="",
                 qa_results="",
@@ -161,12 +147,20 @@ class DocumentationTargetPinningTests(unittest.TestCase):
                 ],
             )
 
-            with patch(
-                "app.services.documentation."
-                "documentation_export_service."
-                "index_documentation_source",
-                side_effect=lambda **kwargs: len(
-                    kwargs["chunks"]
+            with (
+                patch(
+                    "app.services.documentation."
+                    "documentation_export_service."
+                    "index_documentation_source",
+                    side_effect=lambda **kwargs: len(
+                        kwargs["chunks"]
+                    ),
+                ),
+                patch(
+                    "app.services.documentation."
+                    "documentation_export_service."
+                    "DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT",
+                    str(documentation_root),
                 ),
             ):
                 with self.assertRaises(ContextValidationError):

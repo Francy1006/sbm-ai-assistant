@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+import re
 from typing import Dict, List, Literal, Optional
 
 from pydantic import (
@@ -9,6 +11,66 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+
+_OBJECTIVE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_BRANCH_PATTERN = re.compile(
+    r"^(FEATURE|BUGFIX|HOTFIX)-[a-z0-9]+(?:-[a-z0-9]+){0,3}$"
+)
+
+
+class ContextObjective(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    objective_id: str = Field(min_length=1)
+    objective: Optional[str] = None
+    status: Optional[Literal["active", "pending"]] = None
+    priority: Optional[int] = Field(default=None, ge=0, le=5)
+    target_date: Optional[str] = None
+    branch: Optional[str] = None
+
+    @field_validator("objective_id")
+    @classmethod
+    def validate_objective_id(cls, value: str) -> str:
+        if not _OBJECTIVE_ID_PATTERN.fullmatch(value):
+            raise ValueError("objective_id contains invalid characters")
+        return value
+
+    @field_validator("objective")
+    @classmethod
+    def validate_objective(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not value.strip():
+            raise ValueError("objective must not be empty")
+        return value
+
+    @field_validator("target_date")
+    @classmethod
+    def validate_target_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if value == "N/A":
+            return value
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(
+                "target_date must be YYYY-MM-DD or N/A"
+            ) from exc
+        return value
+
+    @field_validator("branch")
+    @classmethod
+    def validate_branch(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not _BRANCH_PATTERN.fullmatch(value):
+            raise ValueError(
+                "branch must match FEATURE|BUGFIX|HOTFIX-<slug-max-4-words>"
+            )
+        return value
 
 
 class ContextExportRequest(BaseModel):
@@ -24,34 +86,13 @@ class ContextExportRequest(BaseModel):
         "implementation-progress",
         "implementation-closure",
     ]
-    objective_id: str = Field(min_length=1)
-    project_root: str = Field(min_length=1)
-    source_context_root: str = Field(min_length=1)
-    format_context_path: str = Field(min_length=1)
-    output_directory: str = Field(min_length=1)
+    execution_mode: Literal["evidence", "user-guided"] = "evidence"
+    objectives: List[ContextObjective] = Field(min_length=1)
     change_summary: Optional[str] = None
     changed_files: Optional[List[str]] = None
     git_diff: Optional[str] = None
     qa_results: Optional[str] = None
     user_prompt: Optional[str] = None
-
-    @field_validator(
-        "project_root",
-        "source_context_root",
-        "format_context_path",
-        "output_directory",
-    )
-    @classmethod
-    def validate_required_path(
-        cls,
-        value: str,
-    ) -> str:
-        if not value.strip():
-            raise ValueError(
-                "path value must not be empty"
-            )
-
-        return value
 
     @field_validator("changed_files")
     @classmethod
@@ -76,14 +117,49 @@ class ContextExportRequest(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_planning_user_prompt(self):
-        if (
-            self.lifecycle_phase == "planning-activation"
-            and not self.user_prompt
-        ):
+    def validate_objectives(self):
+        has_user_prompt = bool(
+            self.user_prompt and self.user_prompt.strip()
+        )
+        expected_execution_mode = (
+            "user-guided" if has_user_prompt else "evidence"
+        )
+        if self.execution_mode != expected_execution_mode:
             raise ValueError(
-                "user_prompt is required for planning-activation"
+                "execution_mode must be user-guided when user_prompt is "
+                "present and evidence when user_prompt is absent"
             )
+
+        objective_ids = [
+            objective.objective_id for objective in self.objectives
+        ]
+        if len(objective_ids) != len(set(objective_ids)):
+            raise ValueError("objectives must not contain duplicate objective_id values")
+
+        if self.lifecycle_phase == "planning-activation":
+            required_fields = (
+                "objective",
+                "status",
+                "priority",
+                "target_date",
+                "branch",
+            )
+            for index, objective in enumerate(self.objectives, start=1):
+                missing = [
+                    field
+                    for field in required_fields
+                    if getattr(objective, field) is None
+                ]
+                if missing:
+                    raise ValueError(
+                        f"objectives[{index}] is missing required planning fields: "
+                        + ", ".join(missing)
+                    )
+        elif len(self.objectives) != 1:
+            raise ValueError(
+                f"{self.lifecycle_phase} currently supports exactly one objective"
+            )
+
         return self
 
 
@@ -100,7 +176,8 @@ class ContextExportResponse(BaseModel):
         "implementation-progress",
         "implementation-closure",
     ]
-    objective_id: str = Field(min_length=1)
+    execution_mode: Literal["evidence", "user-guided"]
+    objectives: List[ContextObjective] = Field(min_length=1)
     context_zip_path: str = Field(min_length=1)
     upload_zip_path: str = Field(min_length=1)
     indexed_source_count: int = Field(ge=0)

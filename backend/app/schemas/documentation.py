@@ -16,34 +16,12 @@ class DocumentationExportRequest(BaseModel):
 
     project_name: str = Field(min_length=1)
     workflow: Literal["documentation-deploy"]
-    project_root: str = Field(min_length=1)
-    documentation_root: str = Field(min_length=1)
-    format_context_path: str = Field(min_length=1)
-    system_prompt_path: str = Field(min_length=1)
-    output_directory: str = Field(min_length=1)
     change_summary: Optional[str] = None
     changed_files: Optional[List[str]] = None
     git_diff: Optional[str] = None
     qa_results: Optional[str] = None
     retrieved_context_chunks: Optional[List[RetrievedContextChunk]] = None
     documentation_targets: Optional[List[str]] = None
-
-    @field_validator(
-        "project_root",
-        "documentation_root",
-        "format_context_path",
-        "system_prompt_path",
-        "output_directory",
-    )
-    @classmethod
-    def validate_required_path(
-        cls,
-        value: str,
-    ) -> str:
-        if not value.strip():
-            raise ValueError("path value must not be empty")
-
-        return value
 
     @field_validator("changed_files", "documentation_targets")
     @classmethod

@@ -77,6 +77,7 @@ def _valid_document(title: str, marker: str) -> str:
 
 class UpgradeEnvironment:
     def __init__(self, root: Path) -> None:
+        self.suite_root = root
         self.documentation_root = root / "context" / "documentation"
         self.input_directory = self.documentation_root / "input"
         self.backup_root = self.documentation_root.parent / "backup"
@@ -214,7 +215,7 @@ class DocumentationUpgradeTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), updated)
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), old_mode)
 
-            backup = Path(response.backup_directory)
+            backup = env.suite_root / response.backup_directory
             self.assertTrue((backup / "previous" / ARCHITECTURE).is_file())
             self.assertTrue((backup / "applied" / ARCHITECTURE).is_file())
             self.assertTrue((backup / EXECUTIVE_README).is_file())
@@ -287,7 +288,7 @@ class DocumentationUpgradeTests(unittest.TestCase):
                 env.targets[BUSINESS].read_text(encoding="utf-8"),
                 original_business,
             )
-            backup = Path(response.backup_directory)
+            backup = env.suite_root / response.backup_directory
             self.assertFalse(
                 (backup / "previous" / BUSINESS).exists()
             )
@@ -307,7 +308,7 @@ class DocumentationUpgradeTests(unittest.TestCase):
             )
 
             response = env.run()
-            backup = Path(response.backup_directory)
+            backup = env.suite_root / response.backup_directory
 
             self.assertEqual(
                 (backup / USER_PROMPT).read_text(encoding="utf-8"),

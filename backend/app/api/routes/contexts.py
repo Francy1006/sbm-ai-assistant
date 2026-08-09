@@ -68,25 +68,32 @@ def context_contract_route() -> ContextContractResponse:
 @router.post(
     "/export",
     response_model=ContextExportResponse,
+    response_model_exclude_none=True,
 )
 def export_contexts_route(
     request: ContextExportRequest,
 ) -> ContextExportResponse:
     try:
         logger.info(
-            "[CONTEXT_EXPORT] route start project=%s phase=%s objective=%s",
+            "[CONTEXT_EXPORT] route start project=%s phase=%s objectives=%s",
             request.project_name,
             request.lifecycle_phase,
-            request.objective_id,
+            ",".join(
+                objective.objective_id
+                for objective in request.objectives
+            ),
         )
         response = export_contexts(request)
         logger.info(
             "[CONTEXT_EXPORT] route return project=%s status=%s "
-            "phase=%s objective=%s",
+            "phase=%s objectives=%s",
             response.project_name,
             response.status,
             response.lifecycle_phase,
-            response.objective_id,
+            ",".join(
+                objective.objective_id
+                for objective in response.objectives
+            ),
         )
         return response
     except ContextValidationError as exc:

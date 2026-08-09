@@ -239,21 +239,6 @@ class DocumentationExportEndpointTests(
                 "workflow": (
                     "documentation-deploy"
                 ),
-                "project_root": str(
-                    project_root
-                ),
-                "documentation_root": str(
-                    documentation_root
-                ),
-                "format_context_path": str(
-                    format_context_path
-                ),
-                "system_prompt_path": str(
-                    system_prompt_path
-                ),
-                "output_directory": str(
-                    output_directory
-                ),
                 "change_summary": (
                     "Update API documentation."
                 ),
@@ -298,6 +283,12 @@ class DocumentationExportEndpointTests(
                         "abc123 API update"
                     ),
                 ),
+                patch(
+                    "app.services.documentation."
+                    "documentation_export_service."
+                    "DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT",
+                    str(documentation_root),
+                ),
             ):
                 response = TestClient(
                     app
@@ -333,7 +324,7 @@ class DocumentationExportEndpointTests(
             )
 
             with ZipFile(
-                payload[
+                suite_root / payload[
                     "documentation_zip_path"
                 ]
             ) as archive:
@@ -506,21 +497,6 @@ class DocumentationExportEndpointTests(
             json={
                 "project_name": "dp-api",
                 "workflow": "other",
-                "project_root": "/tmp/project",
-                "documentation_root": (
-                    "/tmp/documentation"
-                ),
-                "format_context_path": (
-                    "/tmp/documentation/"
-                    "FORMAT_CONTEXT.md"
-                ),
-                "system_prompt_path": (
-                    "/tmp/documentation/"
-                    "SYS_PROMPT.md"
-                ),
-                "output_directory": (
-                    "/tmp/output"
-                ),
             },
         )
 
@@ -538,7 +514,7 @@ class DocumentationExportServiceTests(
     ):
         with tempfile.TemporaryDirectory() as temp:
             (
-                _,
+                suite_root,
                 project_root,
                 documentation_root,
                 format_context_path,
@@ -553,22 +529,6 @@ class DocumentationExportServiceTests(
                 project_name="dp-api",
                 workflow=(
                     "documentation-deploy"
-                ),
-                project_root=str(
-                    project_root
-                ),
-                documentation_root=str(
-                    documentation_root
-                ),
-                format_context_path=str(
-                    format_context_path
-                ),
-                system_prompt_path=str(
-                    system_prompt_path
-                ),
-                output_directory=str(
-                    documentation_root
-                    / "output"
                 ),
                 changed_files=[],
                 git_diff="",
@@ -603,6 +563,12 @@ class DocumentationExportServiceTests(
                     "_collect_git_log",
                     return_value="",
                 ),
+                patch(
+                    "app.services.documentation."
+                    "documentation_export_service."
+                    "DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT",
+                    str(documentation_root),
+                ),
             ):
                 response = (
                     export_documentation(
@@ -611,7 +577,7 @@ class DocumentationExportServiceTests(
                 )
 
             with ZipFile(
-                response.
+                suite_root / response.
                 documentation_zip_path
             ) as archive:
                 self.assertNotIn(
@@ -688,7 +654,7 @@ class DocumentationExportServiceTests(
     ):
         with tempfile.TemporaryDirectory() as temp:
             (
-                _,
+                suite_root,
                 project_root,
                 documentation_root,
                 format_context_path,
@@ -717,22 +683,6 @@ class DocumentationExportServiceTests(
                 workflow=(
                     "documentation-deploy"
                 ),
-                project_root=str(
-                    project_root
-                ),
-                documentation_root=str(
-                    documentation_root
-                ),
-                format_context_path=str(
-                    format_context_path
-                ),
-                system_prompt_path=str(
-                    system_prompt_path
-                ),
-                output_directory=str(
-                    documentation_root
-                    / "output"
-                ),
                 changed_files=[],
                 git_diff="",
                 qa_results="",
@@ -753,6 +703,12 @@ class DocumentationExportServiceTests(
                     "retrieve_relevant_"
                     "documentation_chunks",
                     return_value=[],
+                ),
+                patch(
+                    "app.services.documentation."
+                    "documentation_export_service."
+                    "DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT",
+                    str(documentation_root),
                 ),
             ):
                 with self.assertRaises(
@@ -1111,17 +1067,6 @@ class DocumentationSchemaTests(
                 workflow=(
                     "documentation-deploy"
                 ),
-                project_root="/tmp/project",
-                documentation_root=(
-                    "/tmp/documentation"
-                ),
-                format_context_path=(
-                    "/tmp/FORMAT_CONTEXT.md"
-                ),
-                system_prompt_path=(
-                    "/tmp/SYS_PROMPT.md"
-                ),
-                output_directory="/tmp/output",
                 changed_files=[
                     "README.md",
                     "README.md",
@@ -1151,17 +1096,6 @@ class DocumentationSchemaTests(
                 workflow=(
                     "documentation-deploy"
                 ),
-                project_root="/tmp/project",
-                documentation_root=(
-                    "/tmp/documentation"
-                ),
-                format_context_path=(
-                    "/tmp/FORMAT_CONTEXT.md"
-                ),
-                system_prompt_path=(
-                    "/tmp/SYS_PROMPT.md"
-                ),
-                output_directory="/tmp/output",
                 retrieved_context_chunks=[
                     duplicate,
                     duplicate,

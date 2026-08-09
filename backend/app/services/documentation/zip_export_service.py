@@ -80,7 +80,7 @@ def _render_retrieved_chunks(
     grouped = OrderedDict()
 
     for chunk in chunks:
-        key = (chunk.source_path, chunk.archive_path)
+        key = chunk.archive_path
         grouped.setdefault(key, []).append(chunk)
 
     lines = [f"# {title}", ""]
@@ -89,12 +89,12 @@ def _render_retrieved_chunks(
         lines.extend([empty_message, ""])
         return "\n".join(lines)
 
-    for (source_path, archive_path), source_chunks in grouped.items():
+    for archive_path, source_chunks in grouped.items():
         lines.extend(
             [
                 f"## {archive_path}",
                 "",
-                f"- source_path: `{source_path}`",
+                f"- source_path: `{archive_path}`",
                 f"- archive_path: `{archive_path}`",
                 "",
             ]
@@ -247,24 +247,24 @@ def create_documentation_package(
         ),
         "retrieved_documentation_sources": [
             {
-                "source_path": source_path,
+                "source_path": archive_path,
                 "archive_path": archive_path,
             }
-            for source_path, archive_path in sorted(
+            for archive_path in sorted(
                 {
-                    (chunk.source_path, chunk.archive_path)
+                    chunk.archive_path
                     for chunk in retrieved_documentation_chunks
                 }
             )
         ],
         "retrieved_context_sources": [
             {
-                "source_path": source_path,
+                "source_path": archive_path,
                 "archive_path": archive_path,
             }
-            for source_path, archive_path in sorted(
+            for archive_path in sorted(
                 {
-                    (chunk.source_path, chunk.archive_path)
+                    chunk.archive_path
                     for chunk in retrieved_context_chunks
                 }
             )
@@ -272,7 +272,7 @@ def create_documentation_package(
         "snapshot_policy": "rag-selected-complete",
         "documentation_files": [
             {
-                "source_path": str(documentation_file.source_path),
+                "source_path": documentation_file.archive_path,
                 "archive_path": documentation_file.archive_path,
                 "complete": True,
                 "selected_by_rag": True,
@@ -281,13 +281,13 @@ def create_documentation_package(
             for documentation_file in packaged_documentation_files
         ],
         "format_context_file": {
-            "source_path": str(format_context_path),
+            "source_path": FORMAT_CONTEXT_ARCHIVE_PATH,
             "archive_path": FORMAT_CONTEXT_ARCHIVE_PATH,
             "protected": True,
             "complete": True,
         },
         "system_prompt_file": {
-            "source_path": str(system_prompt_path),
+            "source_path": SYSTEM_PROMPT_ARCHIVE_PATH,
             "archive_path": SYSTEM_PROMPT_ARCHIVE_PATH,
             "protected": True,
             "complete": True,

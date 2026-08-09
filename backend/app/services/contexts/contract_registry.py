@@ -9,6 +9,7 @@ from pathlib import PurePosixPath
 from app.services.project_registry import (
     PROJECT_ALLOWLIST,
     canonical_runtime_project_path,
+    get_project_location,
     runtime_to_repository_path,
 )
 
@@ -161,13 +162,15 @@ def supported_patch_paths() -> list[str]:
 
 def canonical_projects() -> dict[str, str]:
     return {
-        project_name: canonical_runtime_project_path(project_name)
+        project_name: PROJECT_ALLOWLIST[project_name].repository_root
         for project_name in sorted(PROJECT_ALLOWLIST)
     }
 
 
 def canonical_project_path(project_name: str) -> str:
-    return canonical_runtime_project_path(project_name)
+    """Return the canonical repository-relative project root."""
+
+    return get_project_location(project_name).repository_root
 
 
 def patch_target_file(patch_path: str, project_name: str) -> str:
@@ -176,7 +179,7 @@ def patch_target_file(patch_path: str, project_name: str) -> str:
     definition = PATCH_DEFINITIONS[patch_path]
     if definition.scope == "project":
         runtime_target = PurePosixPath(
-            canonical_project_path(project_name),
+            canonical_runtime_project_path(project_name),
             definition.relative_target,
         ).as_posix()
     else:

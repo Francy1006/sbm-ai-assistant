@@ -2,7 +2,10 @@ import logging
 import subprocess
 from pathlib import Path
 
-from app.config.settings import CONTEXT_EXPORT_TOP_K
+from app.config.settings import (
+    CONTEXT_EXPORT_TOP_K,
+    CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT,
+)
 from app.schemas.contexts import ContextExportRequest, ContextExportResponse
 from app.services.contexts.context_index_service import (
     CONTEXT_COLLECTION_NAME,
@@ -33,6 +36,10 @@ from app.services.contexts.models import FullContextFile
 from app.services.contexts.zip_export_service import (
     create_context_package,
     create_context_upload_package,
+)
+from app.services.project_registry import (
+    ProjectRegistryError,
+    get_project_location,
 )
 
 
@@ -164,12 +171,19 @@ def _collect_project_tree(source_context_root: Path) -> str:
 def export_contexts(
     request: ContextExportRequest,
 ) -> ContextExportResponse:
+    try:
+        location = get_project_location(request.project_name)
+    except ProjectRegistryError as exc:
+        raise ContextValidationError(str(exc)) from exc
+
+    suite_context_root = Path(CONTEXT_UPGRADE_SUITE_CONTEXT_ROOT)
+    suite_root = suite_context_root.parent
     project_name, paths = validate_export_paths(
         project_name=request.project_name,
-        project_root=request.project_root,
-        source_context_root=request.source_context_root,
-        format_context_path=request.format_context_path,
-        output_directory=request.output_directory,
+        project_root=str(suite_root / location.relative_root),
+        source_context_root=str(suite_root),
+        format_context_path=str(suite_context_root / "FORMAT_CONTEXT.md"),
+        output_directory=str(suite_context_root / "output"),
     )
     try:
         format_markdown = paths.format_context_path.read_text(encoding="utf-8")
@@ -380,7 +394,11 @@ def export_contexts(
             supported_patch_paths=supported_patch_paths(),
             canonical_project_path=canonical_project_path(project_name),
             lifecycle_phase=request.lifecycle_phase,
-            objective_id=request.objective_id,
+            execution_mode=request.execution_mode,
+            objectives=[
+                objective.model_dump(exclude_none=True)
+                for objective in request.objectives
+            ],
         )
     except Exception as exc:
         logger.exception(
@@ -402,9 +420,13 @@ def export_contexts(
         "project_name": project_name,
         "workflow": "context-deploy",
         "lifecycle_phase": request.lifecycle_phase,
-        "objective_id": request.objective_id,
-        "context_zip_path": str(context_zip_path),
-        "upload_zip_path": str(upload_zip_path),
+        "execution_mode": request.execution_mode,
+        "objectives": [
+            objective.model_dump(exclude_none=True)
+            for objective in request.objectives
+        ],
+        "context_zip_path": "context/output/context-package.zip",
+        "upload_zip_path": "context/output/context-deploy-package.zip",
         "indexed_source_count": indexed_source_count,
         "chunk_count": chunk_count,
         "collection_name": CONTEXT_COLLECTION_NAME,

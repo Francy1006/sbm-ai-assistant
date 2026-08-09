@@ -5,7 +5,10 @@ import re
 import subprocess
 from pathlib import Path
 
-from app.config.settings import DOCUMENTATION_EXPORT_TOP_K
+from app.config.settings import (
+    DOCUMENTATION_EXPORT_TOP_K,
+    DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT,
+)
 from app.schemas.documentation import (
     DocumentationExportRequest,
     DocumentationExportResponse,
@@ -36,6 +39,10 @@ from app.services.documentation.markdown_chunk_service import (
 from app.services.documentation.models import DocumentationFile
 from app.services.documentation.zip_export_service import (
     create_documentation_package,
+)
+from app.services.project_registry import (
+    ProjectRegistryError,
+    get_project_location,
 )
 
 
@@ -284,13 +291,20 @@ def _validate_workflow_contracts(
 def export_documentation(
     request: DocumentationExportRequest,
 ) -> DocumentationExportResponse:
+    try:
+        location = get_project_location(request.project_name)
+    except ProjectRegistryError as exc:
+        raise ContextValidationError(str(exc)) from exc
+
+    documentation_root = Path(DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT)
+    suite_root = documentation_root.parent.parent
     project_name, paths = resolve_documentation_export_paths(
         project_name=request.project_name,
-        project_root=request.project_root,
-        documentation_root=(request.documentation_root),
-        format_context_path=(request.format_context_path),
-        system_prompt_path=(request.system_prompt_path),
-        output_directory=(request.output_directory),
+        project_root=str(suite_root / location.relative_root),
+        documentation_root=str(documentation_root),
+        format_context_path=str(documentation_root / "FORMAT_CONTEXT.md"),
+        system_prompt_path=str(documentation_root / "SYS_PROMPT.md"),
+        output_directory=str(documentation_root / "output"),
     )
 
     _validate_workflow_contracts(
@@ -505,7 +519,7 @@ def export_documentation(
         status="completed",
         project_name=project_name,
         workflow="documentation-deploy",
-        documentation_zip_path=str(documentation_zip_path),
+        documentation_zip_path="context/documentation/output/documentation-package.zip",
         indexed_source_count=(indexed_source_count),
         chunk_count=chunk_count,
         collection_name=(DOCUMENTATION_COLLECTION_NAME),

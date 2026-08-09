@@ -48,7 +48,7 @@ def _render_retrieved_context(
             [
                 f"## {archive_path}",
                 "",
-                f"- source_path: `{source_path}`",
+                f"- source_path: `{archive_path}`",
                 f"- archive_path: `{archive_path}`",
                 "",
             ]
@@ -194,7 +194,8 @@ def create_context_package(
     supported_patch_paths: list[str],
     canonical_project_path: str,
     lifecycle_phase: str,
-    objective_id: str | None,
+    execution_mode: str,
+    objectives: list[dict],
 ) -> Path:
     destination = output_directory / "context-package.zip"
 
@@ -228,7 +229,7 @@ def create_context_package(
 
     retrieved_sources = [
         {
-            "source_path": source_path,
+            "source_path": archive_path,
             "archive_path": archive_path,
         }
         for source_path, archive_path in sorted(
@@ -243,9 +244,7 @@ def create_context_package(
     ]
     full_context_file_manifest = [
         {
-            "source_path": str(
-                context_file.source_path
-            ),
+            "source_path": context_file.archive_path,
             "archive_path": (
                 context_file.archive_path
             ),
@@ -296,7 +295,8 @@ def create_context_package(
         "supported_patch_paths": supported_patch_paths,
         "canonical_project_path": canonical_project_path,
         "lifecycle_phase": lifecycle_phase,
-        "objective_id": objective_id,
+        "execution_mode": execution_mode,
+        "objectives": objectives,
         "generated_at": datetime.now(
             timezone.utc
         ).isoformat(),
@@ -311,9 +311,7 @@ def create_context_package(
             full_context_file_manifest
         ),
         "format_context_file": {
-            "source_path": str(
-                format_context_file.source_path
-            ),
+            "source_path": FORMAT_CONTEXT_ARCHIVE_PATH,
             "archive_path": (
                 FORMAT_CONTEXT_ARCHIVE_PATH
             ),

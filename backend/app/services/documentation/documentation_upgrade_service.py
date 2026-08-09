@@ -813,8 +813,10 @@ def create_upgrade_backup(
             backed_up_files.append(
                 {
                     "archive_path": archive_path,
-                    "original_path": str(target),
-                    "backup_path": str(previous_path),
+                    "original_path": archive_path,
+                    "backup_path": (
+                        PurePosixPath("previous") / PurePosixPath(archive_path)
+                    ).as_posix(),
                     "sha256": original_hash,
                 }
             )
@@ -825,7 +827,9 @@ def create_upgrade_backup(
             "generated_at": generated_at,
             "reason": reason,
             "original_path": [item["original_path"] for item in backed_up_files],
-            "backup_path": str(backup_directory),
+            "backup_path": (
+                PurePosixPath("context/backup") / backup_directory.name
+            ).as_posix(),
             "sha256": sha256_by_file,
             "backed_up_files": backed_up_files,
         }
@@ -1016,7 +1020,7 @@ def upgrade_documentation(
         ) from exc
     if backup_path != (resolved_documentation_root.parent / "backup").resolve():
         raise ContextValidationError(
-            "documentation upgrade backup must be /suite/context/backup"
+            "documentation upgrade backup must resolve to context/backup"
         )
 
     zip_path = locate_upgrade_zip(input_path)
@@ -1069,15 +1073,25 @@ def upgrade_documentation(
 
     commit_message = backup_directory / "COMMIT_MESSAGE.md"
     executive_readme = backup_directory / "EXECUTIVE_README.md"
+    suite_root = resolved_documentation_root.parent.parent
+
+    def relative_output_path(path: Path) -> str:
+        return path.relative_to(suite_root).as_posix()
 
     return DocumentationUpgradeResponse(
         project_name=project_name,
         workflow=UPGRADE_WORKFLOW,
         updated_files=updated_files,
-        backup_directory=str(backup_directory),
-        commit_message_file=(str(commit_message) if commit_message.is_file() else ""),
+        backup_directory=relative_output_path(backup_directory),
+        commit_message_file=(
+            relative_output_path(commit_message)
+            if commit_message.is_file()
+            else ""
+        ),
         executive_readme_file=(
-            str(executive_readme) if executive_readme.is_file() else ""
+            relative_output_path(executive_readme)
+            if executive_readme.is_file()
+            else ""
         ),
         input_cleaned=not zip_path.exists(),
         errors=[],
