@@ -468,6 +468,97 @@ def _seed_active_objectives(
     )
 
 
+def _seed_suite_pending_objective(env: UpgradeEnvironment) -> None:
+    global_path = env.suite_root / "PROJECT_CONTEXT.md"
+    markdown = global_path.read_text(encoding="utf-8")
+    pending_table = (
+        "## 4. Pending objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+    )
+    existing_row = (
+        "| OBJ-CTX-010 | SBM-SUITE | Existing suite objective | pending | 3 | "
+        "N/A | FEATURE-existing-suite-objective | N/A |\n"
+    )
+    if markdown.count(pending_table) != 1:
+        raise AssertionError("Missing unique suite pending objectives table")
+    global_path.write_text(
+        markdown.replace(pending_table, pending_table + existing_row, 1),
+        encoding="utf-8",
+    )
+
+
+def _suite_planning_objectives() -> list[dict]:
+    return [
+        {
+            "objective_id": "OBJ-CTX-011",
+            "objective": "Strengthen context preflight",
+            "status": "pending",
+            "priority": 5,
+            "target_date": "N/A",
+            "branch": "FEATURE-strengthen-context-preflight",
+        },
+        {
+            "objective_id": "OBJ-CTX-012",
+            "objective": "Document context validation",
+            "status": "pending",
+            "priority": 4,
+            "target_date": "2026-08-20",
+            "branch": "FEATURE-document-context-validation",
+        },
+    ]
+
+
+def _suite_pending_section(*, blank_before_objective: str | None = None) -> str:
+    rows = [
+        (
+            "OBJ-CTX-010",
+            "Existing suite objective",
+            "3",
+            "N/A",
+            "FEATURE-existing-suite-objective",
+        ),
+        (
+            "OBJ-CTX-011",
+            "Strengthen context preflight",
+            "5",
+            "N/A",
+            "FEATURE-strengthen-context-preflight",
+        ),
+        (
+            "OBJ-CTX-012",
+            "Document context validation",
+            "4",
+            "2026-08-20",
+            "FEATURE-document-context-validation",
+        ),
+    ]
+    rendered_rows = ""
+    for objective_id, objective, priority, target_date, branch in rows:
+        if objective_id == blank_before_objective:
+            rendered_rows += "\n"
+        rendered_rows += (
+            f"| {objective_id} | SBM-SUITE | {objective} | pending | {priority} | "
+            f"{target_date} | {branch} | N/A |\n"
+        )
+    return (
+        "## 4. Pending objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+        f"{rendered_rows}"
+    )
+
+
+def _run_suite_context_upgrade(env: UpgradeEnvironment):
+    return upgrade_contexts(
+        input_directory=str(env.input_directory),
+        suite_context_root=str(env.suite_root),
+        project_root=str(env.repository_root),
+        backup_root=str(env.backup_root),
+        now=lambda: datetime(2026, 7, 30, 10, 11, 12),
+    )
+
+
 def _completed_row(
     objective_id: str = "OBJ-001",
     objective: str | None = None,
@@ -1403,6 +1494,88 @@ class ContextUpgradeTests(unittest.TestCase):
             )
             self.assertIn("OBJ-CTX-002", updated)
             self.assertIn("| SBM-SUITE |", updated)
+
+    def test_planning_activation_rejects_pending_rows_after_blank_line(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_suite_pending_objective(env)
+            objectives = _suite_planning_objectives()
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 4. Pending objectives",
+                        _suite_pending_section(
+                            blank_before_objective="OBJ-CTX-011"
+                        ),
+                    )
+                },
+                project_name="sbm-suite-context",
+                lifecycle_phase="planning-activation",
+                objectives=objectives,
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "exactly once in its pending table: OBJ-CTX-011",
+            ):
+                _run_suite_context_upgrade(env)
+
+    def test_planning_activation_validates_each_pending_objective_in_batch(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_suite_pending_objective(env)
+            objectives = _suite_planning_objectives()
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 4. Pending objectives",
+                        _suite_pending_section(
+                            blank_before_objective="OBJ-CTX-012"
+                        ),
+                    )
+                },
+                project_name="sbm-suite-context",
+                lifecycle_phase="planning-activation",
+                objectives=objectives,
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "exactly once in its pending table: OBJ-CTX-012",
+            ):
+                _run_suite_context_upgrade(env)
+
+    def test_planning_activation_accepts_contiguous_pending_rows(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_suite_pending_objective(env)
+            objectives = _suite_planning_objectives()
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 4. Pending objectives",
+                        _suite_pending_section(),
+                    )
+                },
+                project_name="sbm-suite-context",
+                lifecycle_phase="planning-activation",
+                objectives=objectives,
+            )
+
+            response = _run_suite_context_upgrade(env)
+
+            self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
+            updated = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            for objective in objectives:
+                self.assertEqual(updated.count(objective["objective_id"]), 1)
 
     def test_suite_context_rejects_project_scoped_patch(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
