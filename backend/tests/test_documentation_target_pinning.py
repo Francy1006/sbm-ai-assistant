@@ -19,6 +19,71 @@ from app.services.documentation.documentation_retrieval_service import (
 
 
 class DocumentationTargetPinningTests(unittest.TestCase):
+    def test_all_required_targets_are_returned_when_they_exceed_top_k(self):
+        targets = [
+            SimpleNamespace(
+                id="architecture",
+                score=0.80,
+                payload={
+                    "source_path": "/docs/architecture.md",
+                    "archive_path": "documentation/pages/architecture.md",
+                    "section": "Roadmap",
+                    "text": "Architecture roadmap.",
+                },
+            ),
+            SimpleNamespace(
+                id="suite-roadmap",
+                score=0.70,
+                payload={
+                    "source_path": "/docs/sbm-suite.md",
+                    "archive_path": "documentation/pages/sbm-suite.md",
+                    "section": "Roadmap",
+                    "text": "Suite roadmap.",
+                },
+            ),
+        ]
+
+        with (
+            patch(
+                "app.services.documentation."
+                "documentation_retrieval_service.create_embedding",
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "app.services.documentation."
+                "documentation_retrieval_service.search_similar",
+                side_effect=[
+                    [],
+                    [],
+                    [targets[0]],
+                    [],
+                    [targets[1]],
+                    [],
+                ],
+            ),
+        ):
+            chunks = retrieve_relevant_documentation_chunks(
+                project_name="sbm-manager",
+                query="Reconcile accumulated objectives",
+                top_k=1,
+                allowed_archive_paths=[
+                    "documentation/pages/architecture.md",
+                    "documentation/pages/sbm-suite.md",
+                ],
+                required_archive_paths=[
+                    "documentation/pages/architecture.md",
+                    "documentation/pages/sbm-suite.md",
+                ],
+            )
+
+        self.assertEqual(
+            {chunk.archive_path for chunk in chunks},
+            {
+                "documentation/pages/architecture.md",
+                "documentation/pages/sbm-suite.md",
+            },
+        )
+
     def test_required_documentation_target_is_pinned_into_top_k(
         self,
     ):

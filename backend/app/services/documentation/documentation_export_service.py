@@ -434,7 +434,9 @@ def export_documentation(
         git_log = _collect_git_log(paths.project_root)
         qa_results = request.qa_results or ""
         change_summary = request.change_summary or ""
-        project_tree = _collect_project_tree(paths.project_root)
+        project_tree = _collect_project_tree(
+            paths.documentation_root.parent
+        )
 
         query = build_documentation_query(
             project_name=project_name,
@@ -468,6 +470,7 @@ def export_documentation(
                 project_name=project_name,
                 query=query,
                 top_k=DOCUMENTATION_EXPORT_TOP_K,
+                global_across_projects=True,
             )
 
         logger.info(

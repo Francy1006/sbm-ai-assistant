@@ -19,6 +19,9 @@ from app.services.contexts.file_discovery_service import (
     ContextValidationError,
 )
 from app.services.contexts.models import RetrievedContextChunk
+from app.services.contexts.context_retrieval_service import (
+    retrieve_relevant_context_chunks,
+)
 from app.services.documentation.documentation_export_service import (
     export_documentation,
 )
@@ -148,13 +151,14 @@ def _prepare_environment(
         exist_ok=True,
     )
     (
-        project_root
+        suite_root
+        / "context"
         / "project-tree.txt"
     ).write_text(
-        "DP-API/\n"
-        "├── backend/\n"
+        "SBM-SUITE/\n"
         "├── context/\n"
-        "└── scripts/\n",
+        "├── dp/DP-API/\n"
+        "└── sbm/SBM-MANAGER/\n",
         encoding="utf-8",
     )
 
@@ -470,10 +474,10 @@ class DocumentationExportEndpointTests(
                 )
 
                 expected_tree = (
-                    "DP-API/\n"
-                    "├── backend/\n"
+                    "SBM-SUITE/\n"
                     "├── context/\n"
-                    "└── scripts/"
+                    "├── dp/DP-API/\n"
+                    "└── sbm/SBM-MANAGER/"
                 )
                 self.assertEqual(
                     manifest[
@@ -509,6 +513,141 @@ class DocumentationExportEndpointTests(
 class DocumentationExportServiceTests(
     unittest.TestCase
 ):
+    def test_export_reconciles_global_context_from_multiple_projects(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (
+                suite_root,
+                project_root,
+                documentation_root,
+                format_context_path,
+                system_prompt_path,
+            ) = _prepare_environment(temp)
+            manager_root = suite_root / "sbm" / "SBM-MANAGER"
+            manager_root.mkdir(parents=True)
+            context_chunks = [
+                RetrievedContextChunk(
+                    point_id="global-active",
+                    source_path="SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    archive_path="SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    section="## 3. Active objectives",
+                    score=1.0,
+                    content=(
+                        "| OBJ-DP-101 | DP-API | First active | active |\n"
+                        "| OBJ-DP-102 | DP-API | Second active | active |"
+                    ),
+                ),
+                RetrievedContextChunk(
+                    point_id="global-pending",
+                    source_path="SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    archive_path="SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    section="## 4. Pending objectives",
+                    score=0.999,
+                    content=(
+                        "| OBJ-MGR-201 | SBM-MANAGER | First pending | pending |\n"
+                        "| OBJ-MGR-202 | SBM-MANAGER | Second pending | pending |"
+                    ),
+                ),
+                RetrievedContextChunk(
+                    point_id="global-completed",
+                    source_path="SBM-SUITE/context/COMPLETED_OBJECTIVES.md",
+                    archive_path=(
+                        "SBM-SUITE/context/COMPLETED_OBJECTIVES.md"
+                    ),
+                    section="## 1. Completed objectives by project",
+                    score=0.998,
+                    content="| OBJ-DP-100 | DP-API | Completed | completed |",
+                ),
+            ]
+            selected_documentation = [
+                RetrievedContextChunk(
+                    point_id=f"documentation-{name}",
+                    source_path=str(documentation_root / name),
+                    archive_path=f"documentation/{name}",
+                    section="Roadmap",
+                    score=0.9,
+                    content=f"Candidate {name}",
+                )
+                for name in ("architecture.md", "roadmap.md")
+            ]
+            request = DocumentationExportRequest(
+                project_name="sbm-manager",
+                workflow="documentation-deploy",
+                change_summary="Reconcile the complete global objective state.",
+                changed_files=["src/manager.ts"],
+                git_diff="diff --git a/src/manager.ts b/src/manager.ts",
+                qa_results="SBM-MANAGER tests passed.",
+                retrieved_context_chunks=context_chunks,
+                documentation_targets=[
+                    "documentation/architecture.md",
+                    "documentation/roadmap.md",
+                ],
+            )
+
+            with (
+                patch(
+                    "app.services.documentation.documentation_export_service."
+                    "index_documentation_source",
+                    side_effect=lambda **kwargs: len(kwargs["chunks"]),
+                ),
+                patch(
+                    "app.services.documentation.documentation_export_service."
+                    "retrieve_relevant_documentation_chunks",
+                    return_value=selected_documentation,
+                ) as retrieval_mock,
+                patch(
+                    "app.services.documentation.documentation_export_service."
+                    "_collect_git_log",
+                    return_value="manager change",
+                ),
+                patch(
+                    "app.services.documentation.documentation_export_service."
+                    "DOCUMENTATION_UPGRADE_DOCUMENTATION_ROOT",
+                    str(documentation_root),
+                ),
+            ):
+                response = export_documentation(request)
+
+            self.assertEqual(response.project_name, "sbm-manager")
+            retrieval_mock.assert_called_once()
+            self.assertEqual(
+                set(retrieval_mock.call_args.kwargs["required_archive_paths"]),
+                {
+                    "documentation/architecture.md",
+                    "documentation/roadmap.md",
+                },
+            )
+            with ZipFile(suite_root / response.documentation_zip_path) as archive:
+                names = set(archive.namelist())
+                self.assertIn("documentation/architecture.md", names)
+                self.assertIn("documentation/roadmap.md", names)
+                retrieved_context = archive.read("retrieved-context.md").decode(
+                    "utf-8"
+                )
+                for objective_id in (
+                    "OBJ-DP-100",
+                    "OBJ-DP-101",
+                    "OBJ-DP-102",
+                    "OBJ-MGR-201",
+                    "OBJ-MGR-202",
+                ):
+                    self.assertEqual(retrieved_context.count(objective_id), 1)
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["project_name"], "sbm-manager")
+                self.assertEqual(
+                    manifest["retrieved_context_chunk_count"],
+                    3,
+                )
+                self.assertEqual(
+                    {
+                        snapshot["archive_path"]
+                        for snapshot in manifest["documentation_files"]
+                    },
+                    {
+                        "documentation/architecture.md",
+                        "documentation/roadmap.md",
+                    },
+                )
+
     def test_export_omits_project_tree_when_missing(
         self,
     ):
@@ -521,7 +660,8 @@ class DocumentationExportServiceTests(
                 system_prompt_path,
             ) = _prepare_environment(temp)
             (
-                project_root
+                suite_root
+                / "context"
                 / "project-tree.txt"
             ).unlink()
 
@@ -662,7 +802,8 @@ class DocumentationExportServiceTests(
             ) = _prepare_environment(temp)
 
             tree_path = (
-                project_root
+                suite_root
+                / "context"
                 / "project-tree.txt"
             )
             tree_path.unlink()
@@ -722,6 +863,60 @@ class DocumentationExportServiceTests(
 class DocumentationRetrievalTests(
     unittest.TestCase
 ):
+    def test_global_context_fallback_is_not_limited_to_origin_project(self):
+        points = [
+            SimpleNamespace(
+                id="dp-objective",
+                score=0.95,
+                payload={
+                    "source_path": "/suite/context/PROJECT_CONTEXT.md",
+                    "archive_path": "SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    "section": "Active objectives",
+                    "text": "OBJ-DP-101 active",
+                },
+            ),
+            SimpleNamespace(
+                id="manager-objective",
+                score=0.94,
+                payload={
+                    "source_path": "/suite/context/PROJECT_CONTEXT.md",
+                    "archive_path": "SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    "section": "Pending objectives",
+                    "text": "OBJ-MGR-201 pending",
+                },
+            ),
+        ]
+
+        with (
+            patch(
+                "app.services.contexts.context_retrieval_service."
+                "create_embedding",
+                return_value=[0.1, 0.2],
+            ),
+            patch(
+                "app.services.contexts.context_retrieval_service."
+                "search_similar",
+                return_value=points,
+            ) as search_mock,
+        ):
+            chunks = retrieve_relevant_context_chunks(
+                project_name="sbm-manager",
+                query="Global lifecycle reconciliation",
+                top_k=8,
+                global_across_projects=True,
+            )
+
+        search_mock.assert_called_once()
+        filter_keys = {
+            condition.key
+            for condition in search_mock.call_args.kwargs["query_filter"].must
+        }
+        self.assertNotIn("project_name", filter_keys)
+        self.assertEqual(
+            [chunk.point_id for chunk in chunks],
+            ["dp-objective", "manager-objective"],
+        )
+
     def test_query_contains_change_domains_and_project_tree(
         self,
     ):

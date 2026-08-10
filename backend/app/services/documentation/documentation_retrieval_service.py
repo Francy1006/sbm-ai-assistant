@@ -408,11 +408,6 @@ def retrieve_relevant_documentation_chunks(
             "allowed_archive_paths"
         )
 
-    if len(required_paths) > top_k:
-        raise ValueError(
-            "required_archive_paths cannot exceed top_k"
-        )
-
     vector = create_embedding(
         normalized_query
     )
@@ -586,14 +581,8 @@ def retrieve_relevant_documentation_chunks(
                 None,
             )
 
-            if removable_index is None:
-                raise ValueError(
-                    "Unable to reserve retrieval slot for required "
-                    "documentation target: "
-                    f"{required_path}"
-                )
-
-            unique_chunks.pop(removable_index)
+            if removable_index is not None:
+                unique_chunks.pop(removable_index)
 
         unique_chunks.append(selected)
         represented_paths.add(required_path)

@@ -193,16 +193,13 @@ def build_context_query(
 def _scope_filter(
     project_name: str,
     global_scope: bool,
+    global_across_projects: bool = False,
 ) -> Filter:
     repository_condition = FieldCondition(
         key="repository",
         match=MatchValue(value=GLOBAL_REPOSITORY),
     )
     must = [
-        FieldCondition(
-            key="project_name",
-            match=MatchValue(value=project_name),
-        ),
         FieldCondition(
             key="workflow",
             match=MatchValue(value=CONTEXT_WORKFLOW),
@@ -212,6 +209,14 @@ def _scope_filter(
             match=MatchValue(value=True),
         ),
     ]
+    if not global_across_projects:
+        must.insert(
+            0,
+            FieldCondition(
+                key="project_name",
+                match=MatchValue(value=project_name),
+            ),
+        )
 
     if global_scope:
         must.append(repository_condition)
@@ -246,6 +251,8 @@ def retrieve_relevant_context_chunks(
     project_name: str,
     query: str,
     top_k: int = CONTEXT_EXPORT_TOP_K,
+    *,
+    global_across_projects: bool = False,
 ) -> list[RetrievedContextChunk]:
     normalized_project_name = project_name.strip()
     normalized_query = query.strip()
@@ -262,7 +269,8 @@ def retrieve_relevant_context_chunks(
     vector = create_embedding(normalized_query)
     candidates = []
 
-    for global_scope in (True, False):
+    scopes = (True,) if global_across_projects else (True, False)
+    for global_scope in scopes:
         candidates.extend(
             search_similar(
                 vector=vector,
@@ -271,6 +279,7 @@ def retrieve_relevant_context_chunks(
                 query_filter=_scope_filter(
                     project_name=normalized_project_name,
                     global_scope=global_scope,
+                    global_across_projects=global_across_projects,
                 ),
             )
         )

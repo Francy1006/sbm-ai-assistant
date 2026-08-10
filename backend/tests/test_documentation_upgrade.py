@@ -264,6 +264,87 @@ class DocumentationUpgradeTests(unittest.TestCase):
                     content,
                 )
 
+    def test_origin_project_can_apply_idempotent_multi_project_reconciliation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = UpgradeEnvironment(Path(temp))
+            original_business = env.targets[BUSINESS].read_text(encoding="utf-8")
+            env.targets[ROADMAP].write_text(
+                _valid_document(
+                    "Roadmap",
+                    (
+                        "OBJ-DP-100 | DP-API | active\n"
+                        "OBJ-DP-101 | DP-API | pending\n"
+                        "Unrelated roadmap content."
+                    ),
+                ),
+                encoding="utf-8",
+            )
+            reconciled = _valid_document(
+                "Roadmap",
+                (
+                    "OBJ-DP-100 | DP-API | completed\n"
+                    "OBJ-DP-101 | DP-API | active\n"
+                    "OBJ-DP-102 | DP-API | active\n"
+                    "OBJ-MGR-201 | SBM-MANAGER | pending\n"
+                    "OBJ-MGR-202 | SBM-MANAGER | pending\n"
+                    "Unrelated roadmap content."
+                ),
+            )
+
+            _create_upgrade_zip(
+                env.zip_path,
+                {ROADMAP: reconciled},
+                manifest_updates={"project_name": "sbm-manager"},
+            )
+            first_response = upgrade_documentation(
+                input_directory=str(env.input_directory),
+                documentation_root=str(env.documentation_root),
+                backup_root=str(env.backup_root),
+                now=lambda: datetime(2026, 8, 10, 10, 0, 0),
+            )
+
+            self.assertEqual(first_response.project_name, "sbm-manager")
+            self.assertEqual(
+                env.targets[ROADMAP].read_text(encoding="utf-8"),
+                reconciled,
+            )
+            self.assertEqual(
+                env.targets[BUSINESS].read_text(encoding="utf-8"),
+                original_business,
+            )
+            applied_roadmap = env.targets[ROADMAP].read_text(encoding="utf-8")
+            for expected in (
+                "OBJ-DP-100 | DP-API | completed",
+                "OBJ-DP-101 | DP-API | active",
+                "OBJ-DP-102 | DP-API | active",
+                "OBJ-MGR-201 | SBM-MANAGER | pending",
+                "OBJ-MGR-202 | SBM-MANAGER | pending",
+                "Unrelated roadmap content.",
+            ):
+                self.assertIn(expected, applied_roadmap)
+
+            _create_upgrade_zip(
+                env.zip_path,
+                {ROADMAP: reconciled},
+                manifest_updates={"project_name": "sbm-manager"},
+            )
+            second_response = upgrade_documentation(
+                input_directory=str(env.input_directory),
+                documentation_root=str(env.documentation_root),
+                backup_root=str(env.backup_root),
+                now=lambda: datetime(2026, 8, 10, 10, 0, 1),
+            )
+
+            self.assertEqual(second_response.project_name, "sbm-manager")
+            self.assertEqual(
+                env.targets[ROADMAP].read_text(encoding="utf-8"),
+                reconciled,
+            )
+            self.assertEqual(
+                env.targets[BUSINESS].read_text(encoding="utf-8"),
+                original_business,
+            )
+
     def test_partial_update_replaces_only_selected_file(self):
         with tempfile.TemporaryDirectory() as temp:
             env = UpgradeEnvironment(Path(temp))
