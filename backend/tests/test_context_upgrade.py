@@ -19,7 +19,7 @@ from app.services.contexts.contract_registry import (
     build_contract_version,
     canonical_project_path,
     patch_target_file,
-    supported_patch_paths,
+    supported_patch_paths_for_project,
 )
 from app.services.contexts.file_discovery_service import ContextValidationError
 
@@ -405,7 +405,7 @@ def _create_upgrade_zip(
         "contract_version": build_contract_version(
             (path.parent.parent / "FORMAT_CONTEXT.md").read_text(encoding="utf-8")
         ),
-        "supported_patch_paths": supported_patch_paths(),
+        "supported_patch_paths": supported_patch_paths_for_project(project_name),
         "canonical_project_path": canonical_project_path(project_name),
         "lifecycle_phase": lifecycle_phase,
         "objectives": objectives,
@@ -1357,6 +1357,79 @@ class ContextUpgradeTests(unittest.TestCase):
                 "diverges from manifest.objectives for OBJ-001: branch",
             ):
                 env.run()
+
+    def test_suite_context_planning_activation_uses_global_context_only(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objectives = [
+                {
+                    "objective_id": "OBJ-CTX-002",
+                    "objective": "Enable cross-project flows",
+                    "status": "pending",
+                    "priority": 5,
+                    "target_date": "N/A",
+                    "branch": "FEATURE-enables-cross-project-flows",
+                }
+            ]
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 4. Pending objectives",
+                        "## 4. Pending objectives\n\n"
+                        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-CTX-002 | SBM-SUITE | Enable cross-project flows | pending | 5 | N/A | FEATURE-enables-cross-project-flows | N/A |\n",
+                    )
+                },
+                project_name="sbm-suite-context",
+                lifecycle_phase="planning-activation",
+                objectives=objectives,
+            )
+
+            response = upgrade_contexts(
+                input_directory=str(env.input_directory),
+                suite_context_root=str(env.suite_root),
+                project_root=str(env.repository_root),
+                backup_root=str(env.backup_root),
+                now=lambda: datetime(2026, 7, 30, 10, 11, 12),
+            )
+
+            self.assertEqual(response.project_name, "sbm-suite-context")
+            self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
+            updated = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("OBJ-CTX-002", updated)
+            self.assertIn("| SBM-SUITE |", updated)
+
+    def test_suite_context_rejects_project_scoped_patch(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        "SBM-SUITE/context/context/PROJECT_CONTEXT.md",
+                        "## 2. Project purpose",
+                        "## 2. Project purpose\n\nInvalid suite-local patch.\n",
+                    )
+                },
+                project_name="sbm-suite-context",
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "unauthorized|supported",
+            ):
+                upgrade_contexts(
+                    input_directory=str(env.input_directory),
+                    suite_context_root=str(env.suite_root),
+                    project_root=str(env.repository_root),
+                    backup_root=str(env.backup_root),
+                    now=lambda: datetime(2026, 7, 30, 10, 11, 12),
+                )
 
     def test_completed_objective_requires_global_and_project_context_patches(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

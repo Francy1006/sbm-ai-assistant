@@ -13,9 +13,13 @@ class ProjectLocation:
     project_name: str
     brand: str
     directory_name: str
+    suite_scoped: bool = False
+    objective_label: str | None = None
 
     @property
     def relative_root(self) -> Path:
+        if self.suite_scoped:
+            return Path(self.directory_name)
         return Path(self.brand) / self.directory_name
 
     @property
@@ -30,6 +34,10 @@ class ProjectLocation:
     def repository_root(self) -> str:
         return f"SBM-SUITE/{self.archive_root}"
 
+    @property
+    def lifecycle_objective_label(self) -> str:
+        return self.objective_label or self.directory_name
+
 
 PROJECT_ALLOWLIST = {
     "dp-api": ProjectLocation("dp-api", "dp", "DP-API"),
@@ -40,6 +48,13 @@ PROJECT_ALLOWLIST = {
         "sbm-ai-assistant",
         "sbm",
         "sbm-ai-assistant",
+    ),
+    "sbm-suite-context": ProjectLocation(
+        "sbm-suite-context",
+        "suite",
+        "context",
+        suite_scoped=True,
+        objective_label="SBM-SUITE",
     ),
 }
 
@@ -53,6 +68,14 @@ def get_project_location(project_name: str) -> ProjectLocation:
             + ", ".join(sorted(PROJECT_ALLOWLIST))
         )
     return location
+
+
+def is_suite_scoped_project(project_name: str) -> bool:
+    return get_project_location(project_name).suite_scoped
+
+
+def lifecycle_objective_label(project_name: str) -> str:
+    return get_project_location(project_name).lifecycle_objective_label
 
 
 def canonical_runtime_project_path(project_name: str) -> str:

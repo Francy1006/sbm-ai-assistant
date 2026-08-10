@@ -6,6 +6,7 @@ from app.services.contexts.models import ContextSource
 from app.services.project_registry import (
     ProjectRegistryError,
     get_project_location,
+    is_suite_scoped_project,
 )
 
 
@@ -432,6 +433,13 @@ def discover_context_sources(
             legacy_source_path=point_identity_path,
         )
 
+    if is_suite_scoped_project(project_name):
+        if not sources:
+            raise ContextValidationError(
+                "No allowed Markdown context files were found"
+            )
+        return sources, errors
+
     project_relative_root = paths.project_root.relative_to(
         paths.source_context_root
     ).as_posix()
@@ -476,6 +484,9 @@ def resolve_full_context_sources(
     for scope, relative_path, archive_template in (
         FULL_CONTEXT_FILE_MAPPINGS
     ):
+        if scope == "project" and is_suite_scoped_project(project_name):
+            continue
+
         root = (
             paths.source_context_root
             if scope == "global"

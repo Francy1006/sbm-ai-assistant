@@ -25,6 +25,7 @@ from app.services.contexts.contract_registry import (
     canonical_projects,
     patch_target_file,
     supported_patch_paths,
+    supported_patch_paths_for_project,
     validate_format_context,
 )
 from app.services.contexts.context_retrieval_service import (
@@ -883,8 +884,28 @@ class ContextContractMappingTests(unittest.TestCase):
                 "sbm-api": "SBM-SUITE/sbm/SBM-API",
                 "sbm-db": "SBM-SUITE/sbm/SBM-DB",
                 "sbm-manager": "SBM-SUITE/sbm/SBM-MANAGER",
+                "sbm-suite-context": "SBM-SUITE/context",
             },
         )
+
+    def test_suite_context_uses_only_suite_scoped_patches(self):
+        self.assertEqual(
+            canonical_projects()["sbm-suite-context"],
+            "SBM-SUITE/context",
+        )
+        self.assertNotIn(
+            "patches/project-context.json",
+            supported_patch_paths_for_project("sbm-suite-context"),
+        )
+        self.assertIn(
+            "patches/global-project-context.json",
+            supported_patch_paths_for_project("sbm-suite-context"),
+        )
+        with self.assertRaises(ProjectRegistryError):
+            patch_target_file(
+                "patches/project-context.json",
+                "sbm-suite-context",
+            )
 
     def test_concrete_dp_api_project_mappings_are_accepted(self):
         validate_format_context(_valid_format_contract("dp-api"))
@@ -1639,6 +1660,34 @@ class ProjectAllowlistTests(unittest.TestCase):
                     f"SBM-SUITE/{brand}/{directory_name}/README.md",
                     {source.archive_path for source in sources},
                 )
+
+    def test_suite_context_resolves_without_project_local_sources(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            suite_root = Path(temporary_directory) / "suite"
+            context_root = suite_root / "context"
+            output_root = context_root / "output"
+            output_root.mkdir(parents=True)
+            for source_path, _ in GLOBAL_SOURCE_FILES:
+                _write_markdown(suite_root / source_path, source_path)
+
+            safe_name, paths = validate_export_paths(
+                project_name="sbm-suite-context",
+                project_root=str(context_root),
+                source_context_root=str(context_root),
+                format_context_path=str(context_root / "FORMAT_CONTEXT.md"),
+                output_directory=str(output_root / "sbm-suite-context"),
+            )
+            sources, errors = discover_context_sources(safe_name, paths)
+
+            self.assertEqual(errors, [])
+            archive_paths = {source.archive_path for source in sources}
+            self.assertIn(
+                "SBM-SUITE/context/PROJECT_CONTEXT.md",
+                archive_paths,
+            )
+            self.assertFalse(
+                any("/context/context/" in path for path in archive_paths)
+            )
 
     def test_project_path_from_another_allowlisted_project_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

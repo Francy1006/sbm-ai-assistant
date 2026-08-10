@@ -8,8 +8,10 @@ from pathlib import PurePosixPath
 
 from app.services.project_registry import (
     PROJECT_ALLOWLIST,
+    ProjectRegistryError,
     canonical_runtime_project_path,
     get_project_location,
+    is_suite_scoped_project,
     runtime_to_repository_path,
 )
 
@@ -160,6 +162,26 @@ def supported_patch_paths() -> list[str]:
     return sorted(PATCH_DEFINITIONS)
 
 
+def patch_is_supported_for_project(
+    patch_path: str,
+    project_name: str,
+) -> bool:
+    definition = PATCH_DEFINITIONS[patch_path]
+    return not (
+        definition.scope == "project"
+        and is_suite_scoped_project(project_name)
+    )
+
+
+def supported_patch_paths_for_project(project_name: str) -> list[str]:
+    get_project_location(project_name)
+    return [
+        patch_path
+        for patch_path in supported_patch_paths()
+        if patch_is_supported_for_project(patch_path, project_name)
+    ]
+
+
 def canonical_projects() -> dict[str, str]:
     return {
         project_name: PROJECT_ALLOWLIST[project_name].repository_root
@@ -178,6 +200,11 @@ def patch_target_file(patch_path: str, project_name: str) -> str:
 
     definition = PATCH_DEFINITIONS[patch_path]
     if definition.scope == "project":
+        if is_suite_scoped_project(project_name):
+            raise ProjectRegistryError(
+                f"{patch_path} is not supported for suite-scoped project "
+                f"{project_name}"
+            )
         runtime_target = PurePosixPath(
             canonical_runtime_project_path(project_name),
             definition.relative_target,
@@ -198,6 +225,10 @@ def _registry_payload() -> dict:
         ],
         "lifecycle_phases": list(LIFECYCLE_PHASES),
         "canonical_projects": canonical_projects(),
+        "project_supported_patch_paths": {
+            project_name: supported_patch_paths_for_project(project_name)
+            for project_name in sorted(PROJECT_ALLOWLIST)
+        },
     }
 
 
@@ -264,6 +295,10 @@ def validate_format_context(format_markdown: str) -> None:
                     project_name,
                 )
                 for project_name in PROJECT_ALLOWLIST
+                if patch_is_supported_for_project(
+                    definition.patch_path,
+                    project_name,
+                )
             }
         else:
             target_mappings = {

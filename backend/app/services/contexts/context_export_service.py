@@ -16,7 +16,7 @@ from app.services.contexts.contract_registry import (
     build_contract_version,
     canonical_project_path,
     patch_target_file,
-    supported_patch_paths,
+    supported_patch_paths_for_project,
     validate_format_context,
 )
 from app.services.contexts.context_retrieval_service import (
@@ -270,10 +270,14 @@ def export_contexts(
         for source in full_context_sources
     ]
 
+    project_supported_patches = set(
+        supported_patch_paths_for_project(project_name)
+    )
     required_full_targets = {
         patch_target_file(patch_path, project_name)
         for patch_path, definition in PATCH_DEFINITIONS.items()
-        if request.lifecycle_phase in definition.lifecycle_phases
+        if patch_path in project_supported_patches
+        and request.lifecycle_phase in definition.lifecycle_phases
     }
     missing_required_targets = required_full_targets & set(
         missing_full_context_files
@@ -391,7 +395,7 @@ def export_contexts(
             full_context_files=full_context_files,
             missing_full_context_files=missing_full_context_files,
             contract_version=build_contract_version(format_markdown),
-            supported_patch_paths=supported_patch_paths(),
+            supported_patch_paths=sorted(project_supported_patches),
             canonical_project_path=canonical_project_path(project_name),
             lifecycle_phase=request.lifecycle_phase,
             execution_mode=request.execution_mode,

@@ -20,6 +20,8 @@ from app.config.settings import (
 from app.services.project_registry import (
     ProjectRegistryError,
     get_project_location,
+    is_suite_scoped_project,
+    lifecycle_objective_label,
     resolve_allowed_project_root,
 )
 from app.schemas.contexts import ContextObjective, ContextUpgradeResponse
@@ -30,7 +32,7 @@ from app.services.contexts.contract_registry import (
     build_contract_version,
     canonical_project_path,
     patch_target_file,
-    supported_patch_paths,
+    supported_patch_paths_for_project,
     validate_format_context,
 )
 from app.services.contexts.file_discovery_service import (
@@ -97,6 +99,39 @@ REUSABLE_CHANGE_MARKERS = (
     "model.py",
     "models.py",
 )
+
+
+def _objective_context_patches(project_name: str) -> frozenset[str]:
+    if is_suite_scoped_project(project_name):
+        return frozenset({"patches/global-project-context.json"})
+    return OBJECTIVE_CONTEXT_PATCHES
+
+
+def _reusable_sync_patches(project_name: str) -> frozenset[str]:
+    if is_suite_scoped_project(project_name):
+        return frozenset(
+            {
+                "patches/global-project-context.json",
+                "patches/global-readme.json",
+            }
+        )
+    return PROJECT_SYNC_PATCHES
+
+
+def _closure_required_patches(project_name: str) -> set[str]:
+    required = {
+        COMPLETED_OBJECTIVES_PATCH,
+        "patches/global-project-context.json",
+        "patches/global-qa-context.json",
+    }
+    if not is_suite_scoped_project(project_name):
+        required.update(
+            {
+                "patches/project-context.json",
+                "patches/project-qa-context.json",
+            }
+        )
+    return required
 
 
 class ContextUpgradeOperationalError(RuntimeError):
@@ -281,10 +316,11 @@ def validate_upgrade_manifest(
         raise ContextValidationError("manifest.project_name must be a string")
     project_name = validate_project_name(project_name_value)
     try:
-        project_name = get_project_location(project_name).project_name
+        location = get_project_location(project_name)
+        project_name = location.project_name
     except ProjectRegistryError as exc:
         raise ContextValidationError(str(exc)) from exc
-    if project_name.casefold() != project_root.name.casefold():
+    if location.directory_name.casefold() != project_root.name.casefold():
         raise ContextValidationError(
             "manifest.project_name does not match configured project"
         )
@@ -315,7 +351,10 @@ def validate_upgrade_manifest(
         raise ContextValidationError(
             "manifest.supported_patch_paths must be a unique string list"
         )
-    unknown_supported = set(manifest_supported_patches) - set(supported_patch_paths())
+    applicable_patch_paths = set(
+        supported_patch_paths_for_project(project_name)
+    )
+    unknown_supported = set(manifest_supported_patches) - applicable_patch_paths
     if unknown_supported:
         raise ContextValidationError(
             "manifest.supported_patch_paths contains unknown patches: "
@@ -382,7 +421,7 @@ def validate_upgrade_manifest(
                 "manifest.changed_files must contain safe project-relative paths"
             )
 
-    system_allowlist = set(PATCH_DEFINITIONS) | set(INFORMATIONAL_FILES)
+    system_allowlist = applicable_patch_paths | set(INFORMATIONAL_FILES)
     missing_required_files = REQUIRED_ROOT_FILES - actual_files
     if missing_required_files:
         raise ContextValidationError(
@@ -433,12 +472,18 @@ def validate_upgrade_manifest(
         or any(marker in path for marker in REUSABLE_CHANGE_MARKERS)
         for path in normalized_changed_files
     )
-    if reusable_change and not PROJECT_SYNC_PATCHES.issubset(actual_files):
+    reusable_sync_patches = _reusable_sync_patches(project_name)
+    if reusable_change and not reusable_sync_patches.issubset(actual_files):
+        if is_suite_scoped_project(project_name):
+            raise ContextValidationError(
+                "Reusable or structural suite-context changes require "
+                "global-project-context.json and global-readme.json patches"
+            )
         raise ContextValidationError(
             "Reusable or structural changes require project-context.json "
             "and project-readme.json patches"
         )
-    physical_patch_paths = expected_updated_files & set(PATCH_DEFINITIONS)
+    physical_patch_paths = expected_updated_files & applicable_patch_paths
     undeclared_patches = physical_patch_paths - set(manifest_supported_patches)
     if undeclared_patches:
         raise ContextValidationError(
@@ -470,13 +515,7 @@ def validate_upgrade_manifest(
             "implementation-progress forbids completed-objectives.json"
         )
     if lifecycle_phase == "implementation-closure":
-        closure_patches = {
-            COMPLETED_OBJECTIVES_PATCH,
-            "patches/global-project-context.json",
-            "patches/project-context.json",
-            "patches/global-qa-context.json",
-            "patches/project-qa-context.json",
-        }
+        closure_patches = _closure_required_patches(project_name)
         missing_closure_patches = closure_patches - actual_files
         if missing_closure_patches:
             raise ContextValidationError(
@@ -495,7 +534,7 @@ def validate_upgrade_manifest(
         raise ContextValidationError(
             "manifest.updated_files must be a subset of manifest.allowed_files"
         )
-    if not (expected_updated_files & set(PATCH_DEFINITIONS)):
+    if not (expected_updated_files & applicable_patch_paths):
         raise ContextValidationError(
             "Upgrade ZIP must contain at least one authorized patch file"
         )
@@ -573,6 +612,7 @@ def validate_upgrade_manifest(
         staging_directory,
         actual_files,
         lifecycle_phase,
+        project_name,
     )
 
     return project_name, updated_files, lifecycle_phase, objectives
@@ -839,26 +879,36 @@ def validate_objective_lifecycle_patches(
     staging_directory: Path,
     actual_files: set[str],
     lifecycle_phase: str,
+    project_name: str,
 ):
-    global_project_present = "patches/global-project-context.json" in actual_files
-    project_present = "patches/project-context.json" in actual_files
+    objective_patches = _objective_context_patches(project_name)
     completed_present = COMPLETED_OBJECTIVES_PATCH in actual_files
 
     objective_headings = {ACTIVE_OBJECTIVE_HEADING, PENDING_OBJECTIVE_HEADING}
     objective_context_changed = False
-    for patch_path in OBJECTIVE_CONTEXT_PATCHES & actual_files:
+    for patch_path in objective_patches & actual_files:
         headings = _patch_operation_headings(staging_directory, patch_path)
         if headings & objective_headings:
             objective_context_changed = True
 
-    if objective_context_changed and global_project_present != project_present:
+    if objective_context_changed and not objective_patches.issubset(actual_files):
+        if is_suite_scoped_project(project_name):
+            raise ContextValidationError(
+                "Suite context objective changes require "
+                "global-project-context.json"
+            )
         raise ContextValidationError(
             "Objective context changes require both global-project-context.json "
             "and project-context.json"
         )
 
     if completed_present:
-        if not OBJECTIVE_CONTEXT_PATCHES.issubset(actual_files):
+        if not objective_patches.issubset(actual_files):
+            if is_suite_scoped_project(project_name):
+                raise ContextValidationError(
+                    "Completed suite objective closure requires the global "
+                    "PROJECT_CONTEXT patch"
+                )
             raise ContextValidationError(
                 "Completed objective closure requires global and project "
                 "PROJECT_CONTEXT patches"
@@ -1189,12 +1239,22 @@ def _validate_preserved_tables(
             requested_objective_row = any(
                 objective_id in row for objective_id in objective_ids
             )
-            current_project_summary = archive_target in {
-                "SBM-SUITE/context/PROJECT_CONTEXT.md",
-                "SBM-SUITE/context/QA_CONTEXT.md",
-            } and any(
-                marker.casefold() in row.casefold()
-                for marker in (project_name, project_directory)
+            summary_table_headers = {
+                "| Project | Purpose | Active objective | Pending objectives | "
+                "Branch | Main context | QA context | Documentation |",
+                "| Project | QA context | Test count | Passed | Failed | Coverage | "
+                "SonarQube status | Last execution | Overall risk | Evidence |",
+            }
+            current_project_summary = (
+                archive_target in {
+                    "SBM-SUITE/context/PROJECT_CONTEXT.md",
+                    "SBM-SUITE/context/QA_CONTEXT.md",
+                }
+                and header in summary_table_headers
+                and any(
+                    marker.casefold() in row.casefold()
+                    for marker in (project_name, project_directory)
+                )
             )
             if not requested_objective_row and not current_project_summary:
                 if row not in patched_rows:
@@ -1403,6 +1463,7 @@ def validate_and_build_replacements(
     if format_path.is_symlink() or not format_path.is_file():
         raise ContextValidationError(f"Missing required format contract: {format_path}")
     format_markdown = _read_utf8(format_path, "FORMAT_CONTEXT.md")
+    project_label = lifecycle_objective_label(project_name)
     replacements: dict[str, tuple[Path, str]] = {}
     target_headings_seen: set[tuple[str, str]] = set()
 
@@ -1459,7 +1520,7 @@ def validate_and_build_replacements(
             current_markdown = _prepare_completed_objectives_operation(
                 current_markdown,
                 operations,
-                project_root.name,
+                project_label,
             )
         elif any(
             operation["operation"] not in definition.allowed_operations
@@ -1489,7 +1550,7 @@ def validate_and_build_replacements(
     _validate_staged_preservation(
         replacements,
         project_name,
-        project_root.name,
+        project_label,
         lifecycle_phase,
         objectives,
     )
