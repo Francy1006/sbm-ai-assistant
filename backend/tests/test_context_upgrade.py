@@ -1315,6 +1315,49 @@ class ContextUpgradeTests(unittest.TestCase):
             ):
                 env.run()
 
+    def test_planning_activation_rejects_markdown_wrapped_branch(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objectives = [
+                {
+                    "objective_id": "OBJ-001",
+                    "objective": "Enable Material",
+                    "status": "pending",
+                    "priority": 5,
+                    "target_date": "N/A",
+                    "branch": "FEATURE-enable-material",
+                }
+            ]
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 4. Pending objectives",
+                        "## 4. Pending objectives\n\n"
+                        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | DP-API | Enable Material | pending | 5 | N/A | FEATURE-enable-material | N/A |\n",
+                    ),
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 4. Pending objectives",
+                        "## 4. Pending objectives\n\n"
+                        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                        "|---|---|---|---:|---|---|---|\n"
+                        "| OBJ-001 | Enable Material | pending | 5 | N/A | `FEATURE-enable-material` | N/A |\n",
+                    ),
+                },
+                lifecycle_phase="planning-activation",
+                objectives=objectives,
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "diverges from manifest.objectives for OBJ-001: branch",
+            ):
+                env.run()
+
     def test_completed_objective_requires_global_and_project_context_patches(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
