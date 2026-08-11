@@ -83,6 +83,7 @@ class ContextExportRequest(BaseModel):
     workflow: Literal["context-deploy"]
     lifecycle_phase: Literal[
         "planning-activation",
+        "objective-activation",
         "implementation-progress",
         "implementation-closure",
     ]
@@ -136,7 +137,10 @@ class ContextExportRequest(BaseModel):
         if len(objective_ids) != len(set(objective_ids)):
             raise ValueError("objectives must not contain duplicate objective_id values")
 
-        if self.lifecycle_phase == "planning-activation":
+        if self.lifecycle_phase in {
+            "planning-activation",
+            "objective-activation",
+        }:
             required_fields = (
                 "objective",
                 "status",
@@ -151,11 +155,28 @@ class ContextExportRequest(BaseModel):
                     if getattr(objective, field) is None
                 ]
                 if missing:
+                    lifecycle_label = (
+                        "planning"
+                        if self.lifecycle_phase == "planning-activation"
+                        else "activation"
+                    )
                     raise ValueError(
-                        f"objectives[{index}] is missing required planning fields: "
+                        f"objectives[{index}] is missing required "
+                        f"{lifecycle_label} fields: "
                         + ", ".join(missing)
                     )
-        elif len(self.objectives) != 1:
+        if self.lifecycle_phase == "objective-activation":
+            if len(self.objectives) != 1:
+                raise ValueError(
+                    "objective-activation requires exactly one objective"
+                )
+            if self.objectives[0].status != "active":
+                raise ValueError(
+                    "objective-activation requested status must be active"
+                )
+        elif self.lifecycle_phase != "planning-activation" and len(
+            self.objectives
+        ) != 1:
             raise ValueError(
                 f"{self.lifecycle_phase} currently supports exactly one objective"
             )
@@ -173,6 +194,7 @@ class ContextExportResponse(BaseModel):
     workflow: Literal["context-deploy"]
     lifecycle_phase: Literal[
         "planning-activation",
+        "objective-activation",
         "implementation-progress",
         "implementation-closure",
     ]

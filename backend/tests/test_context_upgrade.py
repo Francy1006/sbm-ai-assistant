@@ -235,6 +235,25 @@ def _replace_patch(target_file: str, heading: str, content: str) -> str:
     )
 
 
+def _replace_sections_patch(
+    target_file: str,
+    sections: list[tuple[str, str]],
+) -> str:
+    return json.dumps(
+        {
+            "target_file": target_file,
+            "operations": [
+                {
+                    "operation": "replace_section",
+                    "heading": heading,
+                    "content": content,
+                }
+                for heading, content in sections
+            ],
+        }
+    )
+
+
 def _append_patch(target_file: str, heading: str, content: str) -> str:
     return json.dumps(
         {
@@ -486,6 +505,137 @@ def _seed_suite_pending_objective(env: UpgradeEnvironment) -> None:
         markdown.replace(pending_table, pending_table + existing_row, 1),
         encoding="utf-8",
     )
+
+
+def _activation_objective(
+    objective_id: str = "OBJ-CTX-013",
+    *,
+    status: str = "active",
+) -> dict:
+    return {
+        "objective_id": objective_id,
+        "objective": "Fix context documentation lifecycle",
+        "status": status,
+        "priority": 5,
+        "target_date": "N/A",
+        "branch": "BUGFIX-fixes-context-workflow",
+    }
+
+
+def _seed_pending_objectives(
+    env: UpgradeEnvironment,
+    objectives: list[dict],
+    *,
+    suite_only: bool = False,
+) -> None:
+    global_rows = "".join(
+        "| {objective_id} | {project} | {objective} | pending | {priority} | "
+        "{target_date} | {branch} | N/A |\n".format(
+            project="SBM-SUITE" if suite_only else "DP-API",
+            **objective,
+        )
+        for objective in objectives
+    )
+    global_path = env.suite_root / "PROJECT_CONTEXT.md"
+    global_table = (
+        "## 4. Pending objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+    )
+    global_markdown = global_path.read_text(encoding="utf-8")
+    global_path.write_text(
+        global_markdown.replace(global_table, global_table + global_rows, 1),
+        encoding="utf-8",
+    )
+
+    if suite_only:
+        return
+
+    project_rows = "".join(
+        "| {objective_id} | {objective} | pending | {priority} | {target_date} | "
+        "{branch} | N/A |\n".format(**objective)
+        for objective in objectives
+    )
+    project_path = env.project_root / "context/PROJECT_CONTEXT.md"
+    project_table = (
+        "## 4. Pending objectives\n\n"
+        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---:|---|---|---|\n"
+    )
+    project_markdown = project_path.read_text(encoding="utf-8")
+    project_path.write_text(
+        project_markdown.replace(project_table, project_table + project_rows, 1),
+        encoding="utf-8",
+    )
+
+
+def _activation_patches(
+    objective: dict,
+    *,
+    remaining_pending: list[dict] | None = None,
+    suite_only: bool = False,
+) -> dict[str, str]:
+    remaining_pending = remaining_pending or []
+    project_label = "SBM-SUITE" if suite_only else "DP-API"
+    global_active = (
+        "## 3. Active objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+        "| {objective_id} | {project} | {objective} | active | {priority} | "
+        "{target_date} | {branch} | N/A |\n"
+    ).format(project=project_label, **objective)
+    global_pending_rows = "".join(
+        "| {objective_id} | {project} | {objective} | pending | {priority} | "
+        "{target_date} | {branch} | N/A |\n".format(
+            project=project_label,
+            **pending,
+        )
+        for pending in remaining_pending
+    )
+    global_pending = (
+        "## 4. Pending objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+        + global_pending_rows
+    )
+    patches = {
+        GLOBAL_PROJECT_PATCH: _replace_sections_patch(
+            GLOBAL_PROJECT,
+            [
+                ("## 3. Active objectives", global_active),
+                ("## 4. Pending objectives", global_pending),
+            ],
+        )
+    }
+    if suite_only:
+        return patches
+
+    project_active = (
+        "## 3. Active objectives\n\n"
+        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---:|---|---|---|\n"
+        "| {objective_id} | {objective} | active | {priority} | {target_date} | "
+        "{branch} | N/A |\n"
+    ).format(**objective)
+    project_pending_rows = "".join(
+        "| {objective_id} | {objective} | pending | {priority} | {target_date} | "
+        "{branch} | N/A |\n".format(**pending)
+        for pending in remaining_pending
+    )
+    project_pending = (
+        "## 4. Pending objectives\n\n"
+        "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---:|---|---|---|\n"
+        + project_pending_rows
+    )
+    patches[PROJECT_CONTEXT_PATCH] = _replace_sections_patch(
+        PROJECT_CONTEXT,
+        [
+            ("## 3. Active objectives", project_active),
+            ("## 4. Pending objectives", project_pending),
+        ],
+    )
+    return patches
 
 
 def _suite_planning_objectives() -> list[dict]:
@@ -1284,6 +1434,234 @@ class ContextUpgradeTests(unittest.TestCase):
                     encoding="utf-8"
                 ),
             )
+
+    def test_objective_activation_moves_pending_to_active_project_scoped(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective()
+            unrelated = {
+                **_activation_objective("OBJ-DP-099"),
+                "objective": "Preserve unrelated pending objective",
+                "branch": "FEATURE-preserves-pending-objective",
+            }
+            _seed_pending_objectives(env, [objective, unrelated])
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(
+                    objective,
+                    remaining_pending=[unrelated],
+                ),
+                lifecycle_phase="objective-activation",
+                objectives=[objective],
+            )
+
+            response = env.run()
+
+            self.assertEqual(
+                response.updated_files,
+                sorted([GLOBAL_PROJECT, PROJECT_CONTEXT]),
+            )
+            for context_path in (
+                env.suite_root / "PROJECT_CONTEXT.md",
+                env.project_root / "context/PROJECT_CONTEXT.md",
+            ):
+                markdown = context_path.read_text(encoding="utf-8")
+                active_section, pending_section = markdown.split(
+                    "## 4. Pending objectives",
+                    1,
+                )
+                self.assertEqual(markdown.count(objective["objective_id"]), 1)
+                self.assertIn(objective["objective_id"], active_section)
+                self.assertNotIn(objective["objective_id"], pending_section)
+                self.assertIn(unrelated["objective_id"], pending_section)
+                for field in (
+                    "objective",
+                    "priority",
+                    "target_date",
+                    "branch",
+                ):
+                    self.assertIn(str(objective[field]), active_section)
+
+    def test_suite_context_objective_activation_supports_obj_ctx_013(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective("OBJ-CTX-013")
+            _seed_pending_objectives(env, [objective], suite_only=True)
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(objective, suite_only=True),
+                project_name="sbm-suite-context",
+                lifecycle_phase="objective-activation",
+                objectives=[objective],
+            )
+
+            response = _run_suite_context_upgrade(env)
+
+            self.assertEqual(response.project_name, "sbm-suite-context")
+            self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
+            markdown = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            active_section, pending_section = markdown.split(
+                "## 4. Pending objectives",
+                1,
+            )
+            self.assertEqual(markdown.count("OBJ-CTX-013"), 1)
+            self.assertIn("OBJ-CTX-013", active_section)
+            self.assertNotIn("OBJ-CTX-013", pending_section)
+
+    def test_objective_activation_rejects_missing_pending_objective(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective()
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(objective),
+                lifecycle_phase="objective-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "pending objective must exist exactly once: OBJ-CTX-013",
+            ):
+                env.run()
+
+    def test_objective_activation_requires_all_project_scoped_context_patches(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective()
+            _seed_pending_objectives(env, [objective])
+            patches = _activation_patches(objective)
+            _create_upgrade_zip(
+                env.zip_path,
+                {GLOBAL_PROJECT_PATCH: patches[GLOBAL_PROJECT_PATCH]},
+                lifecycle_phase="objective-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "requires objective context patches: patches/project-context.json",
+            ):
+                env.run()
+
+    def test_objective_activation_rejects_already_active_objective(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective("OBJ-001")
+            _seed_active_objectives(env)
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(objective),
+                lifecycle_phase="objective-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "already active: OBJ-001",
+            ):
+                env.run()
+
+    def test_objective_activation_rejects_completed_objective(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective("OBJ-001")
+            _seed_completed_project_group(env, (_completed_row(),))
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(objective),
+                lifecycle_phase="objective-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "cannot activate completed objective: OBJ-001",
+            ):
+                env.run()
+
+    def test_objective_activation_rejects_requested_pending_status(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            current = _activation_objective()
+            requested = _activation_objective(status="pending")
+            _seed_pending_objectives(env, [current])
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(current),
+                lifecycle_phase="objective-activation",
+                objectives=[requested],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "requested status must be active",
+            ):
+                env.run()
+
+    def test_objective_activation_rejects_changes_beyond_status(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective()
+            _seed_pending_objectives(env, [objective])
+            patches = {
+                patch_path: payload.replace(
+                    "BUGFIX-fixes-context-workflow | N/A |\\n",
+                    "BUGFIX-fixes-context-workflow | changed-docs |\\n",
+                    1,
+                )
+                for patch_path, payload in _activation_patches(objective).items()
+            }
+            _create_upgrade_zip(
+                env.zip_path,
+                patches,
+                lifecycle_phase="objective-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "may change only the status cell: OBJ-CTX-013",
+            ):
+                env.run()
+
+    def test_planning_activation_rejects_existing_operational_id(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective()
+            _seed_pending_objectives(env, [objective])
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(objective),
+                lifecycle_phase="planning-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "cannot reuse existing objective IDs: OBJ-CTX-013",
+            ):
+                env.run()
+
+    def test_planning_activation_rejects_completed_id(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = _activation_objective("OBJ-001")
+            _seed_completed_project_group(env, (_completed_row(),))
+            _create_upgrade_zip(
+                env.zip_path,
+                _activation_patches(objective),
+                lifecycle_phase="planning-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "cannot reuse completed objective IDs: OBJ-001",
+            ):
+                env.run()
 
     def test_planning_activation_applies_multiple_pending_objectives_atomically(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

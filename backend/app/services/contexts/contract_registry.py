@@ -18,6 +18,7 @@ from app.services.project_registry import (
 
 LIFECYCLE_PHASES = (
     "planning-activation",
+    "objective-activation",
     "implementation-progress",
     "implementation-closure",
 )

@@ -39,8 +39,10 @@ from app.services.contexts.file_discovery_service import (
 from app.services.contexts.markdown_chunk_service import (
     split_markdown_into_chunks,
 )
+from app.services.contexts.zip_export_service import create_context_package
 from app.services.contexts.models import (
     ContextSource,
+    FullContextFile,
     RetrievedContextChunk,
 )
 from app.services.qdrant_service import create_collection, scroll_all_points
@@ -707,11 +709,17 @@ class ContextExportRequestTests(unittest.TestCase):
         }
 
     def _request(self, lifecycle_phase: str, user_prompt=None):
-        objectives = (
-            [self._planning_objective()]
-            if lifecycle_phase == "planning-activation"
-            else [{"objective_id": "OBJ-001"}]
-        )
+        if lifecycle_phase == "planning-activation":
+            objectives = [self._planning_objective()]
+        elif lifecycle_phase == "objective-activation":
+            objectives = [
+                {
+                    **self._planning_objective(),
+                    "status": "active",
+                }
+            ]
+        else:
+            objectives = [{"objective_id": "OBJ-001"}]
         return ContextExportRequest(
             project_name="dp-api",
             workflow="context-deploy",
@@ -795,6 +803,92 @@ class ContextExportRequestTests(unittest.TestCase):
                 ],
             )
 
+    def test_objective_activation_is_distinct_from_planning_creation(self):
+        request = self._request("objective-activation")
+
+        self.assertEqual(request.lifecycle_phase, "objective-activation")
+        self.assertEqual(request.objectives[0].status, "active")
+        self.assertEqual(
+            request.objectives[0].model_dump(exclude_none=True),
+            {
+                **self._planning_objective(),
+                "status": "active",
+            },
+        )
+
+    def test_objective_activation_manifest_preserves_explicit_transition(self):
+        request = self._request("objective-activation")
+        objective = request.objectives[0].model_dump(exclude_none=True)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            package_path = create_context_package(
+                output_directory=Path(temporary_directory),
+                project_name="dp-api",
+                query="Activate existing pending objective.",
+                retrieved_chunks=[],
+                change_summary="Pending to active.",
+                changed_files=[],
+                git_diff="",
+                git_log="",
+                qa_results="",
+                project_tree="",
+                top_k=8,
+                full_context_files=[
+                    FullContextFile(
+                        source_path=Path(temporary_directory) / "FORMAT_CONTEXT.md",
+                        archive_path="FORMAT_CONTEXT.md",
+                        content="# FORMAT_CONTEXT.md\n",
+                    ),
+                    FullContextFile(
+                        source_path=Path(temporary_directory) / "PROJECT_CONTEXT.md",
+                        archive_path="SBM-SUITE/context/PROJECT_CONTEXT.md",
+                        content="# PROJECT_CONTEXT.md\n",
+                    ),
+                ],
+                missing_full_context_files=[],
+                contract_version="a" * 64,
+                supported_patch_paths=sorted(PATCH_DEFINITIONS),
+                canonical_project_path="SBM-SUITE/dp/DP-API",
+                lifecycle_phase=request.lifecycle_phase,
+                execution_mode=request.execution_mode,
+                objectives=[objective],
+            )
+
+            with ZipFile(package_path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+
+        self.assertEqual(manifest["lifecycle_phase"], "objective-activation")
+        self.assertEqual(manifest["objectives"], [objective])
+        self.assertEqual(manifest["objectives"][0]["status"], "active")
+
+    def test_objective_activation_rejects_pending_requested_status(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "requested status must be active",
+        ):
+            ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="objective-activation",
+                objectives=[self._planning_objective()],
+            )
+
+    def test_objective_activation_rejects_multiple_objectives(self):
+        with self.assertRaisesRegex(ValueError, "requires exactly one objective"):
+            ContextExportRequest(
+                project_name="dp-api",
+                workflow="context-deploy",
+                lifecycle_phase="objective-activation",
+                objectives=[
+                    {**self._planning_objective("OBJ-001"), "status": "active"},
+                    {
+                        **self._planning_objective("OBJ-002"),
+                        "status": "active",
+                        "branch": "FEATURE-enable-orders",
+                    },
+                ],
+            )
+
     def test_progress_rejects_multiple_objectives(self):
         with self.assertRaisesRegex(ValueError, "exactly one objective"):
             ContextExportRequest(
@@ -850,6 +944,17 @@ class ContextExportRequestTests(unittest.TestCase):
 
 
 class ContextContractMappingTests(unittest.TestCase):
+    def test_lifecycle_phases_separate_creation_from_existing_activation(self):
+        self.assertEqual(
+            LIFECYCLE_PHASES,
+            (
+                "planning-activation",
+                "objective-activation",
+                "implementation-progress",
+                "implementation-closure",
+            ),
+        )
+
     def test_runtime_and_repository_paths_are_distinct_and_convertible(self):
         self.assertEqual(canonical_projects()["dp-api"], "SBM-SUITE/dp/DP-API")
         self.assertEqual(

@@ -5,6 +5,7 @@ import json
 import stat
 import tempfile
 import unittest
+import warnings
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from app.services.documentation.documentation_upgrade_service import (
 ARCHITECTURE = "documentation/architecture.md"
 BUSINESS = "documentation/business.md"
 ROADMAP = "documentation/roadmap.md"
+DOCUMENTATION_PAGE = "documentation/pages/operations.md"
 
 EXECUTIVE_README = "EXECUTIVE_README.md"
 COMMIT_MESSAGE = "COMMIT_MESSAGE.md"
@@ -264,6 +266,22 @@ class DocumentationUpgradeTests(unittest.TestCase):
                     content,
                 )
 
+    def test_documentation_page_can_be_replaced(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = UpgradeEnvironment(Path(temp))
+            target = env.documentation_root / "pages" / "operations.md"
+            _write(target, _valid_document("Operations", "Old page."))
+            updated = _valid_document("Operations", "Updated page.")
+
+            _create_upgrade_zip(
+                env.zip_path,
+                {DOCUMENTATION_PAGE: updated},
+            )
+            response = env.run()
+
+            self.assertIn(DOCUMENTATION_PAGE, response.updated_files)
+            self.assertEqual(target.read_text(encoding="utf-8"), updated)
+
     def test_origin_project_can_apply_idempotent_multi_project_reconciliation(self):
         with tempfile.TemporaryDirectory() as temp:
             env = UpgradeEnvironment(Path(temp))
@@ -486,6 +504,137 @@ class DocumentationUpgradeTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ContextValidationError,
                 "ZIP is missing required files",
+            ):
+                env.run()
+
+    def test_physical_file_absent_from_updated_files_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = UpgradeEnvironment(Path(temp))
+            _create_upgrade_zip(
+                env.zip_path,
+                {ARCHITECTURE: _valid_document("Architecture", "Updated.")},
+                manifest_updates={
+                    "updated_files": [EXECUTIVE_README, COMMIT_MESSAGE],
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "updated_files must match non-manifest ZIP files",
+            ):
+                env.run()
+
+    def test_updated_file_absent_from_zip_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = UpgradeEnvironment(Path(temp))
+            missing = "documentation/missing.md"
+            _create_upgrade_zip(
+                env.zip_path,
+                {ARCHITECTURE: _valid_document("Architecture", "Updated.")},
+                manifest_updates={
+                    "allowed_files": [
+                        EXECUTIVE_README,
+                        COMMIT_MESSAGE,
+                        ARCHITECTURE,
+                        missing,
+                        "manifest.json",
+                    ],
+                    "updated_files": [
+                        EXECUTIVE_README,
+                        COMMIT_MESSAGE,
+                        ARCHITECTURE,
+                        missing,
+                    ],
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "allowed_files contains files absent from ZIP",
+            ):
+                env.run()
+
+    def test_duplicate_manifest_file_entries_are_rejected(self):
+        cases = {
+            "allowed_files": [
+                EXECUTIVE_README,
+                COMMIT_MESSAGE,
+                ARCHITECTURE,
+                "manifest.json",
+                ARCHITECTURE,
+            ],
+            "updated_files": [
+                EXECUTIVE_README,
+                COMMIT_MESSAGE,
+                ARCHITECTURE,
+                ARCHITECTURE,
+            ],
+        }
+
+        for field_name, values in cases.items():
+            with self.subTest(field_name=field_name):
+                with tempfile.TemporaryDirectory() as temp:
+                    env = UpgradeEnvironment(Path(temp))
+                    _create_upgrade_zip(
+                        env.zip_path,
+                        {
+                            ARCHITECTURE: _valid_document(
+                                "Architecture", "Updated."
+                            )
+                        },
+                        manifest_updates={field_name: values},
+                    )
+
+                    with self.assertRaisesRegex(
+                        ContextValidationError,
+                        rf"{field_name} must be a unique string list",
+                    ):
+                        env.run()
+
+    def test_duplicate_physical_zip_member_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = UpgradeEnvironment(Path(temp))
+            updated = _valid_document("Architecture", "Updated.")
+            _create_upgrade_zip(env.zip_path, {ARCHITECTURE: updated})
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with ZipFile(env.zip_path, "a") as archive:
+                    archive.writestr(ARCHITECTURE, updated)
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "Duplicate ZIP member",
+            ):
+                env.run()
+
+    def test_unsafe_manifest_path_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = UpgradeEnvironment(Path(temp))
+            unsafe = "documentation/../escape.md"
+            _create_upgrade_zip(
+                env.zip_path,
+                {ARCHITECTURE: _valid_document("Architecture", "Updated.")},
+                manifest_updates={
+                    "allowed_files": [
+                        EXECUTIVE_README,
+                        COMMIT_MESSAGE,
+                        ARCHITECTURE,
+                        unsafe,
+                        "manifest.json",
+                    ],
+                    "updated_files": [
+                        EXECUTIVE_README,
+                        COMMIT_MESSAGE,
+                        ARCHITECTURE,
+                        unsafe,
+                    ],
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "Unsafe ZIP member path",
             ):
                 env.run()
 
