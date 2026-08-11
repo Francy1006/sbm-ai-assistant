@@ -524,6 +524,24 @@ class DocumentationExportServiceTests(
             ) = _prepare_environment(temp)
             manager_root = suite_root / "sbm" / "SBM-MANAGER"
             manager_root.mkdir(parents=True)
+            documentation_targets = {
+                "documentation/pages/context-lifecycle.md": (
+                    "OBJ-CTX-013 | Context | pending"
+                ),
+                "documentation/pages/dp-api.md": (
+                    "OBJ-DP-201 | DP-API | pending"
+                ),
+                "documentation/pages/sbm-db.md": (
+                    "OBJ-DB-301 | SBM-DB | pending"
+                ),
+            }
+            for archive_path, marker in documentation_targets.items():
+                _write_documentation(
+                    documentation_root
+                    / Path(archive_path).relative_to("documentation"),
+                    Path(archive_path).stem,
+                    marker,
+                )
             context_chunks = [
                 RetrievedContextChunk(
                     point_id="global-active",
@@ -531,10 +549,7 @@ class DocumentationExportServiceTests(
                     archive_path="SBM-SUITE/context/PROJECT_CONTEXT.md",
                     section="## 3. Active objectives",
                     score=1.0,
-                    content=(
-                        "| OBJ-DP-101 | DP-API | First active | active |\n"
-                        "| OBJ-DP-102 | DP-API | Second active | active |"
-                    ),
+                    content="| OBJ-CTX-013 | Context | Objective | active |",
                 ),
                 RetrievedContextChunk(
                     point_id="global-pending",
@@ -543,31 +558,24 @@ class DocumentationExportServiceTests(
                     section="## 4. Pending objectives",
                     score=0.999,
                     content=(
-                        "| OBJ-MGR-201 | SBM-MANAGER | First pending | pending |\n"
-                        "| OBJ-MGR-202 | SBM-MANAGER | Second pending | pending |"
+                        "| OBJ-DP-201 | DP-API | Objective | pending |\n"
+                        "| OBJ-DB-301 | SBM-DB | Objective | pending |"
                     ),
-                ),
-                RetrievedContextChunk(
-                    point_id="global-completed",
-                    source_path="SBM-SUITE/context/COMPLETED_OBJECTIVES.md",
-                    archive_path=(
-                        "SBM-SUITE/context/COMPLETED_OBJECTIVES.md"
-                    ),
-                    section="## 1. Completed objectives by project",
-                    score=0.998,
-                    content="| OBJ-DP-100 | DP-API | Completed | completed |",
                 ),
             ]
             selected_documentation = [
                 RetrievedContextChunk(
-                    point_id=f"documentation-{name}",
-                    source_path=str(documentation_root / name),
-                    archive_path=f"documentation/{name}",
+                    point_id=f"documentation-{Path(archive_path).stem}",
+                    source_path=str(
+                        documentation_root
+                        / Path(archive_path).relative_to("documentation")
+                    ),
+                    archive_path=archive_path,
                     section="Roadmap",
                     score=0.9,
-                    content=f"Candidate {name}",
+                    content=marker,
                 )
-                for name in ("architecture.md", "roadmap.md")
+                for archive_path, marker in documentation_targets.items()
             ]
             request = DocumentationExportRequest(
                 project_name="sbm-manager",
@@ -577,10 +585,7 @@ class DocumentationExportServiceTests(
                 git_diff="diff --git a/src/manager.ts b/src/manager.ts",
                 qa_results="SBM-MANAGER tests passed.",
                 retrieved_context_chunks=context_chunks,
-                documentation_targets=[
-                    "documentation/architecture.md",
-                    "documentation/roadmap.md",
-                ],
+                documentation_targets=list(documentation_targets),
             )
 
             with (
@@ -611,41 +616,38 @@ class DocumentationExportServiceTests(
             retrieval_mock.assert_called_once()
             self.assertEqual(
                 set(retrieval_mock.call_args.kwargs["required_archive_paths"]),
-                {
-                    "documentation/architecture.md",
-                    "documentation/roadmap.md",
-                },
+                set(documentation_targets),
             )
             with ZipFile(suite_root / response.documentation_zip_path) as archive:
                 names = set(archive.namelist())
-                self.assertIn("documentation/architecture.md", names)
-                self.assertIn("documentation/roadmap.md", names)
+                self.assertTrue(set(documentation_targets).issubset(names))
+                self.assertIn("FORMAT_CONTEXT.md", names)
+                self.assertIn("SYS_PROMPT.md", names)
                 retrieved_context = archive.read("retrieved-context.md").decode(
                     "utf-8"
                 )
                 for objective_id in (
-                    "OBJ-DP-100",
-                    "OBJ-DP-101",
-                    "OBJ-DP-102",
-                    "OBJ-MGR-201",
-                    "OBJ-MGR-202",
+                    "OBJ-CTX-013",
+                    "OBJ-DP-201",
+                    "OBJ-DB-301",
                 ):
                     self.assertEqual(retrieved_context.count(objective_id), 1)
                 manifest = json.loads(archive.read("manifest.json"))
                 self.assertEqual(manifest["project_name"], "sbm-manager")
                 self.assertEqual(
                     manifest["retrieved_context_chunk_count"],
-                    3,
+                    2,
+                )
+                self.assertNotIn(
+                    "project_name",
+                    manifest["filters_applied"],
                 )
                 self.assertEqual(
                     {
                         snapshot["archive_path"]
                         for snapshot in manifest["documentation_files"]
                     },
-                    {
-                        "documentation/architecture.md",
-                        "documentation/roadmap.md",
-                    },
+                    set(documentation_targets),
                 )
 
     def test_export_omits_project_tree_when_missing(

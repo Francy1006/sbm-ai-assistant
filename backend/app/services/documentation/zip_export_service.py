@@ -303,7 +303,6 @@ def create_documentation_package(
         "top_k": top_k,
         "errors": list(errors),
         "filters_applied": {
-            "project_name": project_name,
             "workflow": "documentation-deploy",
             "is_active": True,
         },

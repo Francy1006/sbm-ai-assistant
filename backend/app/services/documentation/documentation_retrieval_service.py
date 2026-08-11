@@ -300,6 +300,8 @@ def _scope_filter(
     global_scope: bool,
     archive_path: str | None = None,
 ) -> Filter:
+    del project_name
+
     repository_condition = FieldCondition(
         key="repository",
         match=MatchValue(
@@ -307,12 +309,6 @@ def _scope_filter(
         ),
     )
     must = [
-        FieldCondition(
-            key="project_name",
-            match=MatchValue(
-                value=project_name
-            ),
-        ),
         FieldCondition(
             key="workflow",
             match=MatchValue(

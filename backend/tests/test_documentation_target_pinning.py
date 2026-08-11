@@ -60,7 +60,7 @@ class DocumentationTargetPinningTests(unittest.TestCase):
                     [targets[1]],
                     [],
                 ],
-            ),
+            ) as search_mock,
         ):
             chunks = retrieve_relevant_documentation_chunks(
                 project_name="sbm-manager",
@@ -75,6 +75,13 @@ class DocumentationTargetPinningTests(unittest.TestCase):
                     "documentation/pages/sbm-suite.md",
                 ],
             )
+
+        for call in search_mock.call_args_list:
+            filter_keys = {
+                condition.key
+                for condition in call.kwargs["query_filter"].must
+            }
+            self.assertNotIn("project_name", filter_keys)
 
         self.assertEqual(
             {chunk.archive_path for chunk in chunks},
