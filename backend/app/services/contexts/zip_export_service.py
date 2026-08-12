@@ -196,6 +196,7 @@ def create_context_package(
     lifecycle_phase: str,
     execution_mode: str,
     objectives: list[dict],
+    qa: dict | None = None,
 ) -> Path:
     destination = output_directory / "context-package.zip"
 
@@ -343,6 +344,8 @@ def create_context_package(
         "embedding_model": EMBEDDING_MODEL_NAME,
         "top_k": top_k,
     }
+    if qa is not None:
+        manifest["qa"] = qa
     manifest_json = json.dumps(
         manifest,
         ensure_ascii=False,

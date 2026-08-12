@@ -24,7 +24,11 @@ from app.services.project_registry import (
     lifecycle_objective_label,
     resolve_allowed_project_root,
 )
-from app.schemas.contexts import ContextObjective, ContextUpgradeResponse
+from app.schemas.contexts import (
+    ContextObjective,
+    ContextQADecision,
+    ContextUpgradeResponse,
+)
 from app.services.contexts.context_index_service import content_hash
 from app.services.contexts.contract_registry import (
     LIFECYCLE_PHASES,
@@ -540,13 +544,15 @@ def validate_upgrade_manifest(
                 "implementation-closure is missing required patches: "
                 + ", ".join(sorted(missing_closure_patches))
             )
-        qa = manifest.get("qa")
-        if not isinstance(qa, dict) or qa.get("status") not in {
-            "passed",
-            "success",
-        }:
+        try:
+            qa = ContextQADecision.model_validate(manifest.get("qa"))
+        except ValueError as exc:
             raise ContextValidationError(
-                "implementation-closure requires successful QA"
+                "implementation-closure requires structured QA"
+            ) from exc
+        if qa.status == "failed":
+            raise ContextValidationError(
+                "implementation-closure is blocked by failed QA"
             )
     if not set(updated_files).issubset(declared_allowlist):
         raise ContextValidationError(

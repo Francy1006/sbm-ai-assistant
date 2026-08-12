@@ -403,6 +403,11 @@ def export_contexts(
                 objective.model_dump(exclude_none=True)
                 for objective in request.objectives
             ],
+            qa=(
+                request.qa.model_dump()
+                if request.qa is not None
+                else None
+            ),
         )
     except Exception as exc:
         logger.exception(

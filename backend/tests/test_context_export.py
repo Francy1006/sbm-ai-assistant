@@ -698,6 +698,27 @@ class ContextExportEndpointTests(unittest.TestCase):
 
 class ContextExportRequestTests(unittest.TestCase):
     @staticmethod
+    def _qa_decision(
+        status: str,
+        applicable: bool,
+        evidence: str,
+    ) -> dict:
+        return {
+            "status": status,
+            "applicable": applicable,
+            "workflow_path": "scripts/qa-check.sh",
+            "evidence_file": "qa-results.md",
+            "evidence_sha256": hashlib.sha256(
+                evidence.encode("utf-8")
+            ).hexdigest(),
+            "reason": (
+                "applicable QA workflow executed with canonical evidence"
+                if applicable
+                else "no applicable QA workflow is currently defined"
+            ),
+        }
+
+    @staticmethod
     def _planning_objective(objective_id: str = "OBJ-001") -> dict:
         return {
             "objective_id": objective_id,
@@ -720,6 +741,20 @@ class ContextExportRequestTests(unittest.TestCase):
             ]
         else:
             objectives = [{"objective_id": "OBJ-001"}]
+        request_fields = {}
+        if lifecycle_phase == "implementation-closure":
+            canonical_qa_results = (
+                "# QA Results\n\n"
+                "QA status: not-applicable\n"
+            )
+            request_fields = {
+                "qa_results": canonical_qa_results.rstrip("\n"),
+                "qa": self._qa_decision(
+                    "not-applicable",
+                    False,
+                    canonical_qa_results,
+                ),
+            }
         return ContextExportRequest(
             project_name="dp-api",
             workflow="context-deploy",
@@ -731,6 +766,24 @@ class ContextExportRequestTests(unittest.TestCase):
             ),
             objectives=objectives,
             user_prompt=user_prompt,
+            **request_fields,
+        )
+
+    @staticmethod
+    def _closure_response() -> ContextExportResponse:
+        return ContextExportResponse(
+            status="completed",
+            project_name="dp-api",
+            workflow="context-deploy",
+            lifecycle_phase="implementation-closure",
+            execution_mode="evidence",
+            objectives=[{"objective_id": "OBJ-001"}],
+            context_zip_path="context/output/context-package.zip",
+            upload_zip_path="context/output/context-deploy-package.zip",
+            indexed_source_count=0,
+            chunk_count=0,
+            collection_name="sbm_contexts",
+            errors=[],
         )
 
     def test_planning_without_user_prompt_is_accepted(self):
@@ -901,23 +954,116 @@ class ContextExportRequestTests(unittest.TestCase):
                 ],
             )
 
+    def test_closure_accepts_not_applicable_qa_at_endpoint(self):
+        app = FastAPI()
+        app.include_router(router)
+        request = self._request("implementation-closure")
+
+        with patch(
+            "app.api.routes.contexts.export_contexts",
+            return_value=self._closure_response(),
+        ) as export_mock:
+            response = TestClient(app).post(
+                "/contexts/export",
+                json=request.model_dump(mode="json"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        received = export_mock.call_args.args[0]
+        self.assertEqual(received.qa.model_dump(), request.qa.model_dump())
+        self.assertTrue(received.qa_results.endswith("\n"))
+
+    def test_closure_accepts_passed_qa_at_endpoint(self):
+        evidence = "# QA Results\n\nOverall status: passed\n"
+        request = self._request("implementation-closure").model_dump()
+        request["qa_results"] = evidence
+        request["qa"] = self._qa_decision("passed", True, evidence)
+        app = FastAPI()
+        app.include_router(router)
+
+        with patch(
+            "app.api.routes.contexts.export_contexts",
+            return_value=self._closure_response(),
+        ):
+            response = TestClient(app).post(
+                "/contexts/export",
+                json=request,
+            )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_closure_rejects_noncanonical_qa_status(self):
+        request = self._request("implementation-closure").model_dump()
+        request["qa"]["status"] = "success"
+        app = FastAPI()
+        app.include_router(router)
+
+        response = TestClient(app).post("/contexts/export", json=request)
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_closure_rejects_incoherent_qa_applicability(self):
+        request = self._request("implementation-closure").model_dump()
+        request["qa"]["applicable"] = True
+        app = FastAPI()
+        app.include_router(router)
+
+        response = TestClient(app).post("/contexts/export", json=request)
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_progress_remains_valid_without_qa(self):
+        request = self._request("implementation-progress")
+
+        self.assertIsNone(request.qa)
+        self.assertEqual(request.lifecycle_phase, "implementation-progress")
+
+    def test_closure_qa_is_preserved_in_package_manifest(self):
+        evidence = "# QA Results\n\nOverall status: passed\n"
+        qa = self._qa_decision("passed", True, evidence)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            package_path = create_context_package(
+                output_directory=Path(temporary_directory),
+                project_name="dp-api",
+                query="Close objective.",
+                retrieved_chunks=[],
+                change_summary="Closure.",
+                changed_files=[],
+                git_diff="",
+                git_log="",
+                qa_results=evidence,
+                project_tree="",
+                top_k=8,
+                full_context_files=[
+                    FullContextFile(
+                        source_path=(
+                            Path(temporary_directory) / "FORMAT_CONTEXT.md"
+                        ),
+                        archive_path="FORMAT_CONTEXT.md",
+                        content="# FORMAT_CONTEXT.md\n",
+                    ),
+                ],
+                missing_full_context_files=[],
+                contract_version="a" * 64,
+                supported_patch_paths=sorted(PATCH_DEFINITIONS),
+                canonical_project_path="SBM-SUITE/dp/DP-API",
+                lifecycle_phase="implementation-closure",
+                execution_mode="evidence",
+                objectives=[{"objective_id": "OBJ-001"}],
+                qa=qa,
+            )
+
+            with ZipFile(package_path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                packaged_evidence = archive.read("qa-results.md").decode()
+
+        self.assertEqual(manifest["qa"], qa)
+        self.assertEqual(packaged_evidence, evidence)
+
     def test_closure_null_user_prompt_does_not_return_http_422(self):
         app = FastAPI()
         app.include_router(router)
-        response_payload = ContextExportResponse(
-            status="completed",
-            project_name="dp-api",
-            workflow="context-deploy",
-            lifecycle_phase="implementation-closure",
-            execution_mode="evidence",
-            objectives=[{"objective_id": "OBJ-001"}],
-            context_zip_path="context/output/context-package.zip",
-            upload_zip_path="context/output/context-deploy-package.zip",
-            indexed_source_count=0,
-            chunk_count=0,
-            collection_name="sbm_contexts",
-            errors=[],
-        )
+        response_payload = self._closure_response()
 
         with patch(
             "app.api.routes.contexts.export_contexts",

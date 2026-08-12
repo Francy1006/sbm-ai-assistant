@@ -57,7 +57,8 @@ Estado verificado del código:
 Implementar el flujo `context-deploy`:
 
 ```text
-dp/DP-API/scripts/context-deploy.sh
+SBM-SUITE/context/scripts/project-tree.sh → SBM-SUITE/context/project-tree.txt
+SBM-SUITE/context/scripts/context-deploy.sh
 → SBM-AI-ASSISTANT
 → ingestión de contextos Markdown
 → embeddings

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from datetime import date
+import hashlib
 import re
-from typing import Dict, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     field_validator,
     model_validator,
 )
@@ -73,6 +75,30 @@ class ContextObjective(BaseModel):
         return value
 
 
+class ContextQADecision(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    status: Literal["passed", "failed", "not-applicable"]
+    applicable: bool
+    workflow_path: Literal["scripts/qa-check.sh"]
+    evidence_file: Literal["qa-results.md"]
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_status_applicability(self):
+        expected_applicable = self.status != "not-applicable"
+        if self.applicable != expected_applicable:
+            raise ValueError(
+                f"qa status {self.status} requires applicable="
+                f"{str(expected_applicable).lower()}"
+            )
+        return self
+
+
 class ContextExportRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -92,7 +118,10 @@ class ContextExportRequest(BaseModel):
     change_summary: Optional[str] = None
     changed_files: Optional[List[str]] = None
     git_diff: Optional[str] = None
-    qa_results: Optional[str] = None
+    qa_results: Optional[
+        Annotated[str, StringConstraints(strip_whitespace=False)]
+    ] = None
+    qa: Optional[ContextQADecision] = None
     user_prompt: Optional[str] = None
 
     @field_validator("changed_files")
@@ -129,6 +158,34 @@ class ContextExportRequest(BaseModel):
             raise ValueError(
                 "execution_mode must be user-guided when user_prompt is "
                 "present and evidence when user_prompt is absent"
+            )
+
+        if self.lifecycle_phase == "implementation-closure":
+            if self.qa is None:
+                raise ValueError(
+                    "implementation-closure requires structured qa"
+                )
+            if self.qa.status == "failed":
+                raise ValueError(
+                    "implementation-closure is blocked by failed qa"
+                )
+            qa_results = self.qa_results or ""
+            evidence_sha256 = hashlib.sha256(
+                qa_results.encode("utf-8")
+            ).hexdigest()
+            if self.qa.evidence_sha256 != evidence_sha256:
+                restored_qa_results = f"{qa_results}\n"
+                restored_sha256 = hashlib.sha256(
+                    restored_qa_results.encode("utf-8")
+                ).hexdigest()
+                if self.qa.evidence_sha256 != restored_sha256:
+                    raise ValueError(
+                        "qa evidence_sha256 must match qa_results"
+                    )
+                self.qa_results = restored_qa_results
+        elif self.qa is not None:
+            raise ValueError(
+                "qa is allowed only for implementation-closure"
             )
 
         objective_ids = [

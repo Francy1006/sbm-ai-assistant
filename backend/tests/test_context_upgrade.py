@@ -444,7 +444,14 @@ def _create_upgrade_zip(
             "message_file": COMMIT_MESSAGE,
         },
         "rag": {"retrieved_chunk_count": 3},
-        "qa": {"status": "passed"},
+        "qa": {
+            "status": "passed",
+            "applicable": True,
+            "workflow_path": "scripts/qa-check.sh",
+            "evidence_file": "qa-results.md",
+            "evidence_sha256": "a" * 64,
+            "reason": "applicable QA workflow executed with canonical evidence",
+        },
     }
     if manifest_updates:
         manifest.update(manifest_updates)
@@ -933,7 +940,7 @@ class ContextUpgradeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ContextValidationError,
-                "implementation-closure requires successful QA",
+                "implementation-closure requires structured QA",
             ):
                 env.run()
 
@@ -944,12 +951,21 @@ class ContextUpgradeTests(unittest.TestCase):
                 env.zip_path,
                 _closure_patches(),
                 lifecycle_phase="implementation-closure",
-                manifest_updates={"qa": {"status": "failed"}},
+                manifest_updates={
+                    "qa": {
+                        "status": "failed",
+                        "applicable": True,
+                        "workflow_path": "scripts/qa-check.sh",
+                        "evidence_file": "qa-results.md",
+                        "evidence_sha256": "a" * 64,
+                        "reason": "applicable QA workflow failed",
+                    }
+                },
             )
 
             with self.assertRaisesRegex(
                 ContextValidationError,
-                "implementation-closure requires successful QA",
+                "implementation-closure is blocked by failed QA",
             ):
                 env.run()
 
@@ -961,7 +977,31 @@ class ContextUpgradeTests(unittest.TestCase):
                 env.zip_path,
                 _closure_patches(),
                 lifecycle_phase="implementation-closure",
-                manifest_updates={"qa": {"status": "passed"}},
+            )
+
+            response = env.run()
+
+            self.assertEqual(response.project_name, "dp-api")
+            self.assertTrue(response.input_cleaned)
+
+    def test_closure_with_not_applicable_qa_manifest_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            _create_upgrade_zip(
+                env.zip_path,
+                _closure_patches(),
+                lifecycle_phase="implementation-closure",
+                manifest_updates={
+                    "qa": {
+                        "status": "not-applicable",
+                        "applicable": False,
+                        "workflow_path": "scripts/qa-check.sh",
+                        "evidence_file": "qa-results.md",
+                        "evidence_sha256": "b" * 64,
+                        "reason": "no applicable QA workflow is defined",
+                    }
+                },
             )
 
             response = env.run()
