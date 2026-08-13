@@ -494,6 +494,29 @@ def _seed_active_objectives(
     )
 
 
+def _seed_suite_active_objective(
+    env: UpgradeEnvironment,
+    objective_id: str = "OBJ-CTX-001",
+) -> None:
+    global_path = env.suite_root / "PROJECT_CONTEXT.md"
+    markdown = global_path.read_text(encoding="utf-8")
+    active_table = (
+        "## 3. Active objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+    )
+    row = (
+        f"| {objective_id} | SBM-SUITE | Objective {objective_id} | active | 5 | "
+        f"N/A | FEATURE-{objective_id.casefold()} | N/A |\n"
+    )
+    if markdown.count(active_table) != 1:
+        raise AssertionError("Missing unique suite active objectives table")
+    global_path.write_text(
+        markdown.replace(active_table, active_table + row, 1),
+        encoding="utf-8",
+    )
+
+
 def _seed_suite_pending_objective(env: UpgradeEnvironment) -> None:
     global_path = env.suite_root / "PROJECT_CONTEXT.md"
     markdown = global_path.read_text(encoding="utf-8")
@@ -2274,10 +2297,84 @@ class ContextUpgradeTests(unittest.TestCase):
             ):
                 env.run()
 
-    def test_information_only_zip_is_rejected(self):
+    def test_information_only_progress_zip_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            original_global = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            original_project = (
+                env.project_root / "context/PROJECT_CONTEXT.md"
+            ).read_text(encoding="utf-8")
+            _create_upgrade_zip(env.zip_path, {})
+
+            response = env.run()
+
+            self.assertEqual(response.updated_files, [])
+            self.assertTrue(response.input_cleaned)
+            self.assertFalse(env.zip_path.exists())
+            self.assertEqual(
+                (env.suite_root / "PROJECT_CONTEXT.md").read_text(encoding="utf-8"),
+                original_global,
+            )
+            self.assertEqual(
+                (env.project_root / "context/PROJECT_CONTEXT.md").read_text(
+                    encoding="utf-8"
+                ),
+                original_project,
+            )
+            backup = env.repository_root / response.backup_directory
+            self.assertTrue((backup / EXECUTIVE_README).is_file())
+            self.assertTrue((backup / COMMIT_MESSAGE).is_file())
+            backup_manifest = json.loads(
+                (backup / "BACKUP_MANIFEST.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(backup_manifest["backed_up_files"], [])
+
+    def test_suite_information_only_progress_zip_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_suite_active_objective(env)
+            original_global = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {},
+                project_name="sbm-suite-context",
+                objective_id="OBJ-CTX-001",
+            )
+
+            response = _run_suite_context_upgrade(env)
+
+            self.assertEqual(response.project_name, "sbm-suite-context")
+            self.assertEqual(response.updated_files, [])
+            self.assertTrue(response.input_cleaned)
+            self.assertEqual(
+                (env.suite_root / "PROJECT_CONTEXT.md").read_text(encoding="utf-8"),
+                original_global,
+            )
+
+    def test_information_only_progress_requires_existing_objective(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
             _create_upgrade_zip(env.zip_path, {})
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "objective must exist exactly once",
+            ):
+                env.run()
+
+    def test_information_only_zip_is_rejected_outside_progress(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _create_upgrade_zip(
+                env.zip_path,
+                {},
+                lifecycle_phase="planning-activation",
+            )
 
             with self.assertRaisesRegex(
                 ContextValidationError,

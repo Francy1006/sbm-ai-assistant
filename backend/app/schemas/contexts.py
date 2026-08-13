@@ -295,11 +295,6 @@ class ContextUpgradeResponse(BaseModel):
             if item and item.strip()
         ]
 
-        if not normalized:
-            raise ValueError(
-                "updated_files must contain at least one file"
-            )
-
         if len(normalized) != len(set(normalized)):
             raise ValueError(
                 "updated_files must not contain duplicates"

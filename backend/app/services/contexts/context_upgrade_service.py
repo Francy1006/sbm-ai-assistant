@@ -558,7 +558,10 @@ def validate_upgrade_manifest(
         raise ContextValidationError(
             "manifest.updated_files must be a subset of manifest.allowed_files"
         )
-    if not (expected_updated_files & applicable_patch_paths):
+    if (
+        lifecycle_phase != "implementation-progress"
+        and not (expected_updated_files & applicable_patch_paths)
+    ):
         raise ContextValidationError(
             "Upgrade ZIP must contain at least one authorized patch file"
         )
@@ -1599,6 +1602,42 @@ def _validate_staged_preservation(
     )
 
 
+def _validate_noop_progress_objective(
+    project_name: str,
+    suite_context_root: Path,
+    project_root: Path,
+    objectives: list[dict],
+) -> None:
+    objective_id = objectives[0]["objective_id"]
+    operational_targets = [suite_context_root / "PROJECT_CONTEXT.md"]
+    if not is_suite_scoped_project(project_name):
+        operational_targets.append(project_root / "context/PROJECT_CONTEXT.md")
+
+    completed_markdown = _read_utf8(
+        suite_context_root / "COMPLETED_OBJECTIVES.md",
+        "SBM-SUITE/context/COMPLETED_OBJECTIVES.md",
+    )
+    if objective_id in _objective_ids(completed_markdown):
+        raise ContextValidationError(
+            f"implementation-progress cannot target completed objective: {objective_id}"
+        )
+
+    for target in operational_targets:
+        markdown = _read_utf8(target, target.as_posix())
+        active_ids = _objective_ids(
+            _section_markdown(markdown, ACTIVE_OBJECTIVE_HEADING)
+        )
+        pending_ids = _objective_ids(
+            _section_markdown(markdown, PENDING_OBJECTIVE_HEADING)
+        )
+        occurrences = active_ids.count(objective_id) + pending_ids.count(objective_id)
+        if occurrences != 1:
+            raise ContextValidationError(
+                "implementation-progress objective must exist exactly once in "
+                f"operational context: {objective_id}"
+            )
+
+
 def validate_and_build_replacements(
     staging_directory: Path,
     updated_files: list[str],
@@ -1695,7 +1734,15 @@ def validate_and_build_replacements(
         replacements[expected_target] = (target, patched_markdown)
 
     if not replacements:
-        raise ContextValidationError("No valid context replacements were generated")
+        if lifecycle_phase != "implementation-progress":
+            raise ContextValidationError("No valid context replacements were generated")
+        _validate_noop_progress_objective(
+            project_name,
+            suite_context_root,
+            project_root,
+            objectives,
+        )
+        return {}
     _validate_staged_preservation(
         replacements,
         project_name,
