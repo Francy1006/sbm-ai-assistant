@@ -275,7 +275,7 @@ class ContextUpgradeResponse(BaseModel):
     project_name: str = Field(min_length=1)
     workflow: Literal["context-upgrade"]
     updated_files: List[str]
-    backup_directory: str = Field(min_length=1)
+    backup_directory: str
     commit_message_file: str
     executive_readme_file: str
     input_cleaned: bool

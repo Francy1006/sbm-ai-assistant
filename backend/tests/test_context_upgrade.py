@@ -1057,6 +1057,7 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_manifest_contract_accepts_manifest_only_in_allowed_files(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
             patch_content = _replace_patch(
                 GLOBAL_PROJECT,
                 "## 2. Suite purpose",
@@ -1209,6 +1210,7 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_valid_global_patch_creates_backup_applies_and_cleans_input(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
             target = env.suite_root / "PROJECT_CONTEXT.md"
             old_mode = stat.S_IMODE(target.stat().st_mode)
 
@@ -1267,6 +1269,7 @@ class ContextUpgradeTests(unittest.TestCase):
                         brand,
                         directory_name,
                     )
+                    _seed_active_objectives(env)
                     target = (
                         f"SBM-SUITE/{brand}/{directory_name}/context/"
                         "PROJECT_CONTEXT.md"
@@ -1336,6 +1339,7 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_project_patch_uses_brand_and_real_project_directory(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
             _create_upgrade_zip(
                 env.zip_path,
                 {
@@ -1360,6 +1364,7 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_multiple_authorized_patches_are_applied(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
             _create_upgrade_zip(
                 env.zip_path,
                 {
@@ -1406,6 +1411,7 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_user_guided_zip_accepts_and_backs_up_prompt(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
             _create_upgrade_zip(
                 env.zip_path,
                 {
@@ -1959,7 +1965,7 @@ class ContextUpgradeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ContextValidationError,
-                "exactly once in its pending table: OBJ-CTX-011",
+                "exactly once in its pending table: OBJ-CTX-011|Partial or malformed",
             ):
                 _run_suite_context_upgrade(env)
 
@@ -1986,7 +1992,7 @@ class ContextUpgradeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ContextValidationError,
-                "exactly once in its pending table: OBJ-CTX-012",
+                "exactly once in its pending table: OBJ-CTX-012|Partial or malformed",
             ):
                 _run_suite_context_upgrade(env)
 
@@ -2252,6 +2258,69 @@ class ContextUpgradeTests(unittest.TestCase):
             ):
                 env.run()
 
+    def test_replace_section_preserves_all_tables_under_same_heading(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            qa_path = env.suite_root / "QA_CONTEXT.md"
+            qa_path.write_text(
+                qa_path.read_text(encoding="utf-8").replace(
+                    "| SBM-API | passing | existing |\n\n",
+                    "| SBM-API | passing | existing |\n\n"
+                    "| Control | Owner |\n"
+                    "|---|---|\n"
+                    "| Regression | QA |\n\n",
+                ),
+                encoding="utf-8",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_QA_PATCH: _replace_patch(
+                        GLOBAL_QA,
+                        "## 2. Project QA summaries",
+                        "## 2. Project QA summaries\n\n"
+                        "| Project | Status | Evidence |\n"
+                        "|---|---|---|\n"
+                        "| SBM-API | passing | existing |\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "removes a required table",
+            ):
+                env.run()
+
+    def test_replace_section_preserves_nested_section_structure(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            suite_path = env.suite_root / "SUITE_CONTEXT.md"
+            suite_path.write_text(
+                suite_path.read_text(encoding="utf-8").replace(
+                    "## 2. Product scope\n\nOld second section.",
+                    "## 2. Product scope\n\n"
+                    "### Existing capability\n\nOld second section.",
+                ),
+                encoding="utf-8",
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    SUITE_CONTEXT_PATCH: _replace_patch(
+                        SUITE_CONTEXT,
+                        "## 2. Product scope",
+                        "## 2. Product scope\n\nUpdated without the complete structure.\n",
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "preserve the complete section structure",
+            ):
+                env.run()
+
     def test_changed_table_header_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
@@ -2324,13 +2393,10 @@ class ContextUpgradeTests(unittest.TestCase):
                 ),
                 original_project,
             )
-            backup = env.repository_root / response.backup_directory
-            self.assertTrue((backup / EXECUTIVE_README).is_file())
-            self.assertTrue((backup / COMMIT_MESSAGE).is_file())
-            backup_manifest = json.loads(
-                (backup / "BACKUP_MANIFEST.json").read_text(encoding="utf-8")
-            )
-            self.assertEqual(backup_manifest["backed_up_files"], [])
+            self.assertEqual(response.backup_directory, "")
+            self.assertEqual(response.commit_message_file, "")
+            self.assertEqual(response.executive_readme_file, "")
+            self.assertEqual(list(env.backup_root.iterdir()), [])
 
     def test_suite_information_only_progress_zip_is_accepted(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -2351,6 +2417,7 @@ class ContextUpgradeTests(unittest.TestCase):
             self.assertEqual(response.project_name, "sbm-suite-context")
             self.assertEqual(response.updated_files, [])
             self.assertTrue(response.input_cleaned)
+            self.assertEqual(response.backup_directory, "")
             self.assertEqual(
                 (env.suite_root / "PROJECT_CONTEXT.md").read_text(encoding="utf-8"),
                 original_global,
@@ -2364,6 +2431,66 @@ class ContextUpgradeTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ContextValidationError,
                 "objective must exist exactly once",
+            ):
+                env.run()
+
+    def test_information_only_progress_requires_valid_operational_status(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            global_path = env.suite_root / "PROJECT_CONTEXT.md"
+            global_path.write_text(
+                global_path.read_text(encoding="utf-8").replace(
+                    "| OBJ-001 | DP-API | Objective OBJ-001 | active |",
+                    "| OBJ-001 | DP-API | Objective OBJ-001 | paused |",
+                ),
+                encoding="utf-8",
+            )
+            _create_upgrade_zip(env.zip_path, {})
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "preserve the operational status active",
+            ):
+                env.run()
+
+    def test_progress_patch_cannot_change_active_status(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
+            global_active = (
+                "## 3. Active objectives\n\n"
+                "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                "|---|---|---|---|---:|---|---|---|\n"
+                "| OBJ-001 | DP-API | Objective OBJ-001 | pending | 5 |  | "
+                "FEATURE-obj-001 | N/A |\n"
+            )
+            project_active = (
+                "## 3. Active objectives\n\n"
+                "| ID | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+                "|---|---|---|---:|---|---|---|\n"
+                "| OBJ-001 | Objective OBJ-001 | pending | 5 |  | "
+                "FEATURE-obj-001 | N/A |\n"
+            )
+            _create_upgrade_zip(
+                env.zip_path,
+                {
+                    GLOBAL_PROJECT_PATCH: _replace_patch(
+                        GLOBAL_PROJECT,
+                        "## 3. Active objectives",
+                        global_active,
+                    ),
+                    PROJECT_CONTEXT_PATCH: _replace_patch(
+                        PROJECT_CONTEXT,
+                        "## 3. Active objectives",
+                        project_active,
+                    ),
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "preserve the operational status active",
             ):
                 env.run()
 
@@ -2639,6 +2766,7 @@ class ContextUpgradeTests(unittest.TestCase):
     def test_replacement_failure_rolls_back_and_retains_input(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
+            _seed_active_objectives(env)
             global_original = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
                 encoding="utf-8"
             )

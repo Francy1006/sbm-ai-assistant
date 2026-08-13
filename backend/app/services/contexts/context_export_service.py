@@ -1,4 +1,5 @@
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -131,13 +132,41 @@ def _collect_git_log(project_root: Path) -> str:
     )
 
 
+def _validate_project_tree_evidence(project_tree: str) -> str:
+    normalized = project_tree.strip()
+    if not normalized:
+        raise ContextValidationError(
+            f"{PROJECT_TREE_FILENAME} must contain repository evidence"
+        )
+
+    lines = normalized.splitlines()
+    if lines[0].strip() != "SBM-SUITE/":
+        raise ContextValidationError(
+            f"{PROJECT_TREE_FILENAME} must start with canonical root SBM-SUITE/"
+        )
+
+    absolute_path = re.compile(
+        r"(?:^|[\s`(])(?:/|~[/\\]|[A-Za-z]:[/\\])"
+    )
+    traversal = re.compile(r"(?:^|[\s/\\])\.\.(?:[/\\]|$)")
+    for line in lines:
+        if "\x00" in line or absolute_path.search(line) or traversal.search(line):
+            raise ContextValidationError(
+                f"{PROJECT_TREE_FILENAME} must use canonical repository-relative paths"
+            )
+
+    return normalized
+
+
 def _collect_project_tree(source_context_root: Path) -> str:
     project_tree_path = (
         source_context_root / "context" / PROJECT_TREE_FILENAME
     )
 
     if not project_tree_path.exists():
-        return ""
+        raise ContextValidationError(
+            f"{PROJECT_TREE_FILENAME} is required as structural evidence"
+        )
 
     if (
         not project_tree_path.is_file()
@@ -161,7 +190,9 @@ def _collect_project_tree(source_context_root: Path) -> str:
         )
 
     try:
-        return project_tree_path.read_text(encoding="utf-8").strip()
+        return _validate_project_tree_evidence(
+            project_tree_path.read_text(encoding="utf-8")
+        )
     except (OSError, UnicodeError) as exc:
         raise ContextValidationError(
             f"Unable to read {PROJECT_TREE_FILENAME} as UTF-8"
@@ -309,6 +340,8 @@ def export_contexts(
 
             if indexed_chunks:
                 indexed_source_count += 1
+    except ContextValidationError:
+        raise
     except Exception as exc:
         logger.exception(
             "Context indexing failed for project=%s",
@@ -370,6 +403,8 @@ def export_contexts(
             project_name,
             len(retrieved_chunks),
         )
+    except ContextValidationError:
+        raise
     except Exception as exc:
         logger.exception(
             "Relevant context retrieval failed for project=%s",

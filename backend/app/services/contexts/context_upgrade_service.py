@@ -976,29 +976,75 @@ def validate_objective_lifecycle_patches(
         )
 
 
-def _markdown_tables(markdown: str) -> dict[str, tuple[str, list[str]]]:
-    tables: dict[str, tuple[str, list[str]]] = {}
+def _markdown_table_entries(
+    markdown: str,
+) -> list[tuple[str, str, list[str]]]:
+    tables: list[tuple[str, str, list[str]]] = []
     heading = ""
     lines = markdown.splitlines()
     index = 0
+    fence_character: str | None = None
     while index < len(lines):
         line = lines[index].strip()
+        fence_match = re.match(r"^(`{3,}|~{3,})", line)
+        if fence_match:
+            marker_character = fence_match.group(1)[0]
+            if fence_character is None:
+                fence_character = marker_character
+            elif marker_character == fence_character:
+                fence_character = None
+            index += 1
+            continue
+        if fence_character is not None:
+            index += 1
+            continue
         if re.fullmatch(r"#{1,3}\s+.+", line):
             heading = line
-        if (
-            line.startswith("|")
-            and index + 1 < len(lines)
-            and re.fullmatch(r"\|[\s|:-]+\|", lines[index + 1].strip())
-        ):
+        if line.startswith("|") and line.endswith("|"):
+            if index + 1 >= len(lines) or not re.fullmatch(
+                r"\|[\s|:-]+\|",
+                lines[index + 1].strip(),
+            ):
+                raise ContextValidationError(
+                    f"Partial or malformed Markdown table in {heading or 'document'}"
+                )
             header = line
+            header_cells = _table_row_cells(header)
+            separator_cells = _table_row_cells(lines[index + 1])
+            if len(header_cells) != len(separator_cells) or not all(
+                re.fullmatch(r":?-+:?", cell) for cell in separator_cells
+            ):
+                raise ContextValidationError(
+                    f"Partial or malformed Markdown table in {heading or 'document'}"
+                )
             rows: list[str] = []
             index += 2
-            while index < len(lines) and lines[index].strip().startswith("|"):
-                rows.append(lines[index].strip())
+            while (
+                index < len(lines)
+                and lines[index].strip().startswith("|")
+                and lines[index].strip().endswith("|")
+            ):
+                row = lines[index].strip()
+                if len(_table_row_cells(row)) != len(header_cells):
+                    raise ContextValidationError(
+                        f"Partial or malformed Markdown table in {heading or 'document'}"
+                    )
+                rows.append(row)
                 index += 1
-            tables[heading] = (header, rows)
+            tables.append((heading, header, rows))
             continue
         index += 1
+    return tables
+
+
+def _markdown_tables(markdown: str) -> dict[str, tuple[str, list[str]]]:
+    tables: dict[str, tuple[str, list[str]]] = {}
+    for heading, header, rows in _markdown_table_entries(markdown):
+        if heading in tables:
+            raise ContextValidationError(
+                f"Multiple Markdown tables under one heading are ambiguous: {heading}"
+            )
+        tables[heading] = (header, rows)
     return tables
 
 
@@ -1008,6 +1054,44 @@ def _objective_ids(markdown: str) -> list[str]:
 
 def _table_row_cells(row: str) -> list[str]:
     return [cell.strip() for cell in row.strip().strip("|").split("|")]
+
+
+def _operational_objective_status(markdown: str, objective_id: str) -> str:
+    matches: list[str] = []
+    tables = _markdown_tables(markdown)
+    for heading, expected_status in (
+        (ACTIVE_OBJECTIVE_HEADING, "active"),
+        (PENDING_OBJECTIVE_HEADING, "pending"),
+    ):
+        table = tables.get(heading)
+        if table is None:
+            raise ContextValidationError(
+                f"implementation-progress is missing objective table: {heading}"
+            )
+        header_cells = _table_row_cells(table[0])
+        try:
+            status_index = header_cells.index("Status")
+        except ValueError as exc:
+            raise ContextValidationError(
+                f"implementation-progress objective table has no Status column: {heading}"
+            ) from exc
+        for row in table[1]:
+            cells = _table_row_cells(row)
+            if cells[0] != objective_id:
+                continue
+            if cells[status_index] != expected_status:
+                raise ContextValidationError(
+                    "implementation-progress must preserve the operational status "
+                    f"{expected_status}: {objective_id}"
+                )
+            matches.append(expected_status)
+
+    if len(matches) != 1:
+        raise ContextValidationError(
+            "implementation-progress objective must exist exactly once in "
+            f"operational context: {objective_id}"
+        )
+    return matches[0]
 
 
 def _planning_objective_row(
@@ -1271,14 +1355,22 @@ def _validate_preserved_tables(
     project_directory: str,
     objective_ids: list[str],
 ) -> None:
-    original_tables = _markdown_tables(original)
-    patched_tables = _markdown_tables(patched)
-    for heading, (header, rows) in original_tables.items():
-        if heading not in patched_tables:
+    original_tables = _markdown_table_entries(original)
+    patched_tables = _markdown_table_entries(patched)
+    patched_by_heading: dict[str, list[tuple[str, list[str]]]] = {}
+    for heading, header, rows in patched_tables:
+        patched_by_heading.setdefault(heading, []).append((header, rows))
+
+    original_occurrences: dict[str, int] = {}
+    for heading, header, rows in original_tables:
+        occurrence = original_occurrences.get(heading, 0)
+        original_occurrences[heading] = occurrence + 1
+        candidates = patched_by_heading.get(heading, [])
+        if occurrence >= len(candidates):
             raise ContextValidationError(
                 f"Patched document removes a required table: {archive_target} {heading}"
             )
-        patched_header, patched_rows = patched_tables[heading]
+        patched_header, patched_rows = candidates[occurrence]
         if patched_header != header:
             raise ContextValidationError(
                 f"Patched table header differs from the original: {archive_target} {heading}"
@@ -1312,11 +1404,55 @@ def _validate_preserved_tables(
                     )
 
     reusable_heading = "## Reusable components"
-    if reusable_heading in original_tables:
+    reusable_tables = [
+        (header, rows)
+        for heading, header, rows in original_tables
+        if heading == reusable_heading
+    ]
+    if reusable_tables:
         expected_header = "| File name | Path | Description |"
-        if original_tables[reusable_heading][0] != expected_header:
+        if any(header != expected_header for header, _ in reusable_tables):
             raise ContextValidationError(
                 "Reusable components table has an invalid header"
+            )
+
+
+def _validate_complete_replacement_sections(
+    original: str,
+    patched: str,
+    operations: list[dict[str, str]],
+    archive_target: str,
+) -> None:
+    for operation in operations:
+        if operation["operation"] != "replace_section":
+            continue
+        heading = operation["heading"]
+        original_section = _section_markdown(original, heading)
+        patched_section = _section_markdown(patched, heading)
+        original_nested = [
+            entry
+            for _, entry in sorted(
+                entry
+                for level in range(3, 7)
+                for entry in _markdown_heading_entries(original_section, level)
+            )
+        ]
+        patched_nested = [
+            entry
+            for _, entry in sorted(
+                entry
+                for level in range(3, 7)
+                for entry in _markdown_heading_entries(patched_section, level)
+            )
+        ]
+        cursor = 0
+        for nested_heading in patched_nested:
+            if cursor < len(original_nested) and nested_heading == original_nested[cursor]:
+                cursor += 1
+        if cursor != len(original_nested):
+            raise ContextValidationError(
+                "replace_section must preserve the complete section structure: "
+                f"{archive_target} {heading}"
             )
 
 
@@ -1430,11 +1566,18 @@ def _validate_objective_transition(
     elif lifecycle_phase == "implementation-progress":
         objective_id = objective_ids[0]
         for target in context_targets:
-            if objective_id in _objective_ids(
-                originals[target]
-            ) and objective_id not in _objective_ids(staged[target]):
+            status_before = _operational_objective_status(
+                originals[target],
+                objective_id,
+            )
+            status_after = _operational_objective_status(
+                staged[target],
+                objective_id,
+            )
+            if status_after != status_before:
                 raise ContextValidationError(
-                    "implementation-progress cannot close the objective"
+                    "implementation-progress must preserve objective status: "
+                    f"{objective_id}"
                 )
     elif lifecycle_phase == "objective-activation" and context_targets:
         objective = objectives[0]
@@ -1622,20 +1765,18 @@ def _validate_noop_progress_objective(
             f"implementation-progress cannot target completed objective: {objective_id}"
         )
 
+    operational_statuses: list[str] = []
     for target in operational_targets:
         markdown = _read_utf8(target, target.as_posix())
-        active_ids = _objective_ids(
-            _section_markdown(markdown, ACTIVE_OBJECTIVE_HEADING)
+        operational_statuses.append(
+            _operational_objective_status(markdown, objective_id)
         )
-        pending_ids = _objective_ids(
-            _section_markdown(markdown, PENDING_OBJECTIVE_HEADING)
+
+    if len(set(operational_statuses)) != 1:
+        raise ContextValidationError(
+            "implementation-progress objective status differs between operational "
+            f"contexts: {objective_id}"
         )
-        occurrences = active_ids.count(objective_id) + pending_ids.count(objective_id)
-        if occurrences != 1:
-            raise ContextValidationError(
-                "implementation-progress objective must exist exactly once in "
-                f"operational context: {objective_id}"
-            )
 
 
 def validate_and_build_replacements(
@@ -1726,6 +1867,12 @@ def validate_and_build_replacements(
             target_headings_seen.add(key)
 
         patched_markdown = _apply_operations(current_markdown, operations)
+        _validate_complete_replacement_sections(
+            current_markdown,
+            patched_markdown,
+            operations,
+            expected_target,
+        )
         actual_headings = _document_headings(patched_markdown)
         if actual_headings != allowed_headings:
             raise ContextValidationError(
@@ -2008,21 +2155,21 @@ def upgrade_contexts(
         )
         generated_at = now()
         timestamp = generated_at.strftime("%Y%m%d_%H%M%S_%f")
-        backup_directory = create_upgrade_backup(
-            staging_directory,
-            updated_files,
-            replacements,
-            backup_path,
-            project_name,
-            timestamp,
-            generated_at.isoformat(),
-            f"Apply validated context lifecycle and section patches for {project_name}",
-        )
-        apply_replacements(replacements, backup_directory)
+        backup_directory: Path | None = None
+        if replacements:
+            backup_directory = create_upgrade_backup(
+                staging_directory,
+                updated_files,
+                replacements,
+                backup_path,
+                project_name,
+                timestamp,
+                generated_at.isoformat(),
+                f"Apply validated context lifecycle and section patches for {project_name}",
+            )
+            apply_replacements(replacements, backup_directory)
         cleanup_upgrade_input(zip_path)
 
-    commit_message = backup_directory / "COMMIT_MESSAGE.md"
-    executive_readme = backup_directory / "EXECUTIVE_README.md"
     suite_parent = suite_root.parent
 
     def relative_output_path(path: Path) -> str:
@@ -2032,12 +2179,20 @@ def upgrade_contexts(
         project_name=project_name,
         workflow=UPGRADE_WORKFLOW,
         updated_files=sorted(replacements),
-        backup_directory=relative_output_path(backup_directory),
+        backup_directory=(
+            relative_output_path(backup_directory) if backup_directory else ""
+        ),
         commit_message_file=(
-            relative_output_path(commit_message) if commit_message.is_file() else ""
+            relative_output_path(backup_directory / "COMMIT_MESSAGE.md")
+            if backup_directory
+            and (backup_directory / "COMMIT_MESSAGE.md").is_file()
+            else ""
         ),
         executive_readme_file=(
-            relative_output_path(executive_readme) if executive_readme.is_file() else ""
+            relative_output_path(backup_directory / "EXECUTIVE_README.md")
+            if backup_directory
+            and (backup_directory / "EXECUTIVE_README.md").is_file()
+            else ""
         ),
         input_cleaned=not zip_path.exists(),
         errors=[],

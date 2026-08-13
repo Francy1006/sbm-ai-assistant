@@ -13,7 +13,10 @@ from qdrant_client.models import Distance
 
 from app.api.routes.contexts import router
 from app.schemas.contexts import ContextExportRequest, ContextExportResponse
-from app.services.contexts.context_export_service import export_contexts
+from app.services.contexts.context_export_service import (
+    _validate_project_tree_evidence,
+    export_contexts,
+)
 from app.services.contexts.context_index_service import (
     _deactivate_obsolete_path_points,
     index_context_source,
@@ -586,7 +589,7 @@ class ContextExportEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
 
-    def test_export_omits_project_tree_when_file_is_missing(self):
+    def test_export_requires_project_tree_evidence(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             suite_root = Path(temporary_directory) / "SBM-SUITE"
             project_root = suite_root / "dp" / "DP-API"
@@ -630,24 +633,11 @@ class ContextExportEndpointTests(unittest.TestCase):
                     return_value="",
                 ),
             ):
-                response = _export_contexts_at(request, suite_root)
-
-            with ZipFile(suite_root / response.context_zip_path) as archive:
-                self.assertNotIn("project-tree.txt", archive.namelist())
-                manifest = json.loads(archive.read("manifest.json"))
-                self.assertEqual(
-                    manifest["project_tree"],
-                    {
-                        "included": False,
-                        "source_path": "SBM-SUITE/context/project-tree.txt",
-                        "archive_path": None,
-                        "content_hash": None,
-                    },
-                )
-                self.assertNotIn(
-                    "project-tree.txt",
-                    manifest["content_hashes"],
-                )
+                with self.assertRaisesRegex(
+                    ContextValidationError,
+                    "project-tree.txt is required as structural evidence",
+                ):
+                    _export_contexts_at(request, suite_root)
 
     def test_export_rejects_project_tree_symlink(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -694,6 +684,72 @@ class ContextExportEndpointTests(unittest.TestCase):
             ):
                 with self.assertRaises(Exception):
                     _export_contexts_at(request, suite_root)
+
+    def test_suite_context_export_resolves_canonical_registry_identity(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            suite_root = Path(temporary_directory) / "SBM-SUITE"
+            output_directory = suite_root / "context" / "output"
+            output_directory.mkdir(parents=True)
+            (output_directory / "SYS_PROMPT.md").write_text(
+                "# Runtime prompt\n",
+                encoding="utf-8",
+            )
+            for source_path, archive_path in GLOBAL_SOURCE_FILES:
+                _write_markdown(suite_root / source_path, archive_path)
+            (suite_root / "context" / "FORMAT_CONTEXT.md").write_text(
+                _valid_format_contract(),
+                encoding="utf-8",
+            )
+            (suite_root / "context" / "project-tree.txt").write_text(
+                "SBM-SUITE/\n- context/\n",
+                encoding="utf-8",
+            )
+            request = ContextExportRequest(
+                project_name="sbm-suite-context",
+                workflow="context-deploy",
+                lifecycle_phase="implementation-progress",
+                objectives=[{"objective_id": "OBJ-CTX-001"}],
+                changed_files=[],
+                git_diff="",
+                qa_results="",
+            )
+
+            with (
+                patch(
+                    "app.services.contexts.context_export_service."
+                    "index_context_source",
+                    side_effect=lambda **kwargs: len(kwargs["chunks"]),
+                ),
+                patch(
+                    "app.services.contexts.context_export_service."
+                    "retrieve_relevant_context_chunks",
+                    return_value=[],
+                ),
+                patch(
+                    "app.services.contexts.context_export_service."
+                    "_collect_git_log",
+                    return_value="",
+                ),
+            ):
+                response = _export_contexts_at(request, suite_root)
+
+            with ZipFile(suite_root / response.context_zip_path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+            self.assertEqual(manifest["project_name"], "sbm-suite-context")
+            self.assertEqual(
+                manifest["canonical_project_path"],
+                "SBM-SUITE/context",
+            )
+            self.assertNotIn(
+                "patches/project-context.json",
+                manifest["supported_patch_paths"],
+            )
+            self.assertFalse(
+                any(
+                    "/context/context/" in path
+                    for path in manifest["full_target_files"]
+                )
+            )
 
 
 class ContextExportRequestTests(unittest.TestCase):
@@ -1090,6 +1146,32 @@ class ContextExportRequestTests(unittest.TestCase):
 
 
 class ContextContractMappingTests(unittest.TestCase):
+    def test_project_tree_evidence_uses_only_canonical_repository_paths(self):
+        evidence = (
+            "SBM-SUITE/\n"
+            "- context/\n"
+            "  - project-tree.txt [120 bytes]\n"
+            "- sbm/\n"
+            "  - sbm-ai-assistant/\n"
+        )
+
+        self.assertEqual(
+            _validate_project_tree_evidence(evidence),
+            evidence.strip(),
+        )
+        for invalid in (
+            "/Users/example/SBM-SUITE/context/project-tree.txt\n",
+            "SBM-SUITE/\n- /home/example/context/\n",
+            "SBM-SUITE/\n- ../outside/\n",
+            "C:\\work\\SBM-SUITE\\context\n",
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(
+                    ContextValidationError,
+                    "canonical root|repository-relative paths",
+                ):
+                    _validate_project_tree_evidence(invalid)
+
     def test_lifecycle_phases_separate_creation_from_existing_activation(self):
         self.assertEqual(
             LIFECYCLE_PHASES,
