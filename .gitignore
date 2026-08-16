@@ -8,3 +8,10 @@ __pycache__/
 backend/app/services/__pycache__/
 backend/app/services/confluence/__pycache__
 
+
+# QA artifacts
+.sonar/
+.coverage
+backend/.coverage
+coverage.xml
+report-task.txt

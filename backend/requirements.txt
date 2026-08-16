@@ -11,3 +11,4 @@ slack_sdk
 httpx2
 pytest
 pytest-django
+pytest-cov
