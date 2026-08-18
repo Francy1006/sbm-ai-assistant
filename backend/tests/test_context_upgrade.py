@@ -12,6 +12,10 @@ from zipfile import ZipFile, ZipInfo
 
 from app.services.contexts.context_upgrade_service import (
     ContextUpgradeOperationalError,
+    _activation_summary_change_allowed,
+    _activation_summary_values_allowed,
+    _selected_project_summary_row,
+    _validate_preserved_tables,
     upgrade_contexts,
 )
 from app.services.contexts.contract_registry import (
@@ -447,7 +451,7 @@ def _create_upgrade_zip(
         "qa": {
             "status": "passed",
             "applicable": True,
-            "workflow_path": "scripts/qa-check.sh",
+            "workflow_path": "QA/qa-full.sh",
             "evidence_file": "qa-results.md",
             "evidence_sha256": "a" * 64,
             "reason": "applicable QA workflow executed with canonical evidence",
@@ -668,6 +672,45 @@ def _activation_patches(
     return patches
 
 
+def _suite_activation_batch_patches(
+    objectives: list[dict],
+    *,
+    remaining_pending: list[dict] | None = None,
+) -> dict[str, str]:
+    remaining_pending = remaining_pending or []
+    active_rows = "".join(
+        "| {objective_id} | SBM-SUITE | {objective} | active | {priority} | "
+        "{target_date} | {branch} | N/A |\n".format(**objective)
+        for objective in objectives
+    )
+    pending_rows = "".join(
+        "| {objective_id} | SBM-SUITE | {objective} | pending | {priority} | "
+        "{target_date} | {branch} | N/A |\n".format(**objective)
+        for objective in remaining_pending
+    )
+    active = (
+        "## 3. Active objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+        + active_rows
+    )
+    pending = (
+        "## 4. Pending objectives\n\n"
+        "| ID | Project | Objective | Status | Priority | Target date | Branch | Documentation |\n"
+        "|---|---|---|---|---:|---|---|---|\n"
+        + pending_rows
+    )
+    return {
+        GLOBAL_PROJECT_PATCH: _replace_sections_patch(
+            GLOBAL_PROJECT,
+            [
+                ("## 3. Active objectives", active),
+                ("## 4. Pending objectives", pending),
+            ],
+        )
+    }
+
+
 def _suite_planning_objectives() -> list[dict]:
     return [
         {
@@ -842,6 +885,141 @@ def _closure_patches() -> dict[str, str]:
 
 
 class ContextUpgradeTests(unittest.TestCase):
+    def test_activation_summary_values_accept_valid_batch(self):
+        headers = ["Active objective", "Pending objectives", "Branch"]
+        original = ["OBJ-001", "OBJ-001 OBJ-002", "FEATURE-old"]
+        patched = ["OBJ-001 OBJ-002", "", "FEATURE-batch"]
+        objectives = [
+            {"objective_id": "OBJ-001", "branch": "FEATURE-batch"},
+            {"objective_id": "OBJ-002", "branch": "FEATURE-batch"},
+        ]
+
+        self.assertTrue(
+            _activation_summary_values_allowed(
+                {"Active objective", "Pending objectives", "Branch"},
+                headers,
+                original,
+                patched,
+                objectives,
+            )
+        )
+
+    def test_activation_summary_values_reject_invalid_active_objective(self):
+        self.assertFalse(
+            _activation_summary_values_allowed(
+                {"Active objective"},
+                ["Active objective"],
+                ["OBJ-001"],
+                ["OBJ-001"],
+                [
+                    {"objective_id": "OBJ-001", "branch": "FEATURE-batch"},
+                    {"objective_id": "OBJ-002", "branch": "FEATURE-batch"},
+                ],
+            )
+        )
+
+    def test_activation_summary_values_reject_inconsistent_branches(self):
+        self.assertFalse(
+            _activation_summary_values_allowed(
+                {"Branch"},
+                ["Branch"],
+                ["FEATURE-old"],
+                ["FEATURE-one"],
+                [
+                    {"objective_id": "OBJ-001", "branch": "FEATURE-one"},
+                    {"objective_id": "OBJ-002", "branch": "FEATURE-two"},
+                ],
+            )
+        )
+
+    def test_activation_summary_values_reject_pending_objective_not_removed(self):
+        self.assertFalse(
+            _activation_summary_values_allowed(
+                {"Pending objectives"},
+                ["Pending objectives"],
+                ["OBJ-001 OBJ-002"],
+                ["OBJ-002"],
+                [
+                    {"objective_id": "OBJ-001", "branch": "FEATURE-batch"},
+                    {"objective_id": "OBJ-002", "branch": "FEATURE-batch"},
+                ],
+            )
+        )
+
+    def test_selected_project_summary_row_supports_suite_alias(self):
+        self.assertFalse(
+            _selected_project_summary_row(
+                "not a table row",
+                "sbm-suite-context",
+                "context",
+            )
+        )
+        self.assertTrue(
+            _selected_project_summary_row(
+                "| SBM-SUITE/context | value |",
+                "sbm-suite-context",
+                "context",
+            )
+        )
+
+    def test_activation_summary_change_rejects_duplicate_project_rows(self):
+        header = (
+            "| Project | Purpose | Active objective | Pending objectives | "
+            "Branch | Main context | QA context | Documentation |"
+        )
+        row = "| DP-API | API | OBJ-001 | OBJ-002 | FEATURE-x | A | B | C |"
+
+        self.assertFalse(
+            _activation_summary_change_allowed(
+                header,
+                row,
+                [row, row],
+                "dp-api",
+                "DP-API",
+                [{"objective_id": "OBJ-001", "branch": "FEATURE-x"}],
+            )
+        )
+
+    def test_planning_direct_completion_requires_completed_patch(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = {
+                **_activation_objective("OBJ-DIRECT-001"),
+                "status": "completed",
+            }
+            _create_upgrade_zip(
+                env.zip_path,
+                {},
+                lifecycle_phase="planning-activation",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "direct completion requires completed-objectives.json",
+            ):
+                env.run()
+
+    def test_terminal_transition_requires_all_terminal_patches(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            objective = {
+                **_activation_objective("OBJ-COMPLETE-001"),
+                "status": "completed",
+            }
+            _create_upgrade_zip(
+                env.zip_path,
+                {},
+                lifecycle_phase="objective-completion",
+                objectives=[objective],
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "objective-completion is missing required patches",
+            ):
+                env.run()
+
     def test_contract_version_mismatch_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
@@ -963,7 +1141,7 @@ class ContextUpgradeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ContextValidationError,
-                "implementation-closure requires structured QA",
+                "implementation-closure requires structured full-suite QA",
             ):
                 env.run()
 
@@ -978,7 +1156,7 @@ class ContextUpgradeTests(unittest.TestCase):
                     "qa": {
                         "status": "failed",
                         "applicable": True,
-                        "workflow_path": "scripts/qa-check.sh",
+                        "workflow_path": "QA/qa-full.sh",
                         "evidence_file": "qa-results.md",
                         "evidence_sha256": "a" * 64,
                         "reason": "applicable QA workflow failed",
@@ -988,7 +1166,7 @@ class ContextUpgradeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ContextValidationError,
-                "implementation-closure is blocked by failed QA",
+                "implementation-closure requires passed full-suite QA",
             ):
                 env.run()
 
@@ -1007,7 +1185,7 @@ class ContextUpgradeTests(unittest.TestCase):
             self.assertEqual(response.project_name, "dp-api")
             self.assertTrue(response.input_cleaned)
 
-    def test_closure_with_not_applicable_qa_manifest_is_accepted(self):
+    def test_closure_with_not_applicable_qa_manifest_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
             _seed_active_objectives(env)
@@ -1027,10 +1205,11 @@ class ContextUpgradeTests(unittest.TestCase):
                 },
             )
 
-            response = env.run()
-
-            self.assertEqual(response.project_name, "dp-api")
-            self.assertTrue(response.input_cleaned)
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "implementation-closure requires passed full-suite QA",
+            ):
+                env.run()
 
     def test_planning_with_completed_patch_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1579,6 +1758,257 @@ class ContextUpgradeTests(unittest.TestCase):
             self.assertIn("OBJ-CTX-013", active_section)
             self.assertNotIn("OBJ-CTX-013", pending_section)
 
+    def test_suite_context_activation_migrates_obj_ctx_038_branch(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            pending_objective = {
+                **_activation_objective("OBJ-CTX-038"),
+                "objective": "Standardize transversal Git Flow governance",
+                "branch": "FEATURE-enables-git-flow",
+            }
+            activated_objective = {
+                **pending_objective,
+                "status": "active",
+                "branch": "FEATURE-standardizes-suite-governance",
+            }
+            _seed_pending_objectives(env, [pending_objective], suite_only=True)
+            format_path = env.suite_root / "FORMAT_CONTEXT.md"
+            format_path.write_text(
+                format_path.read_text(encoding="utf-8").replace(
+                    "## 4. Pending objectives\n## 5. Document boundary",
+                    "## 4. Pending objectives\n"
+                    "## 6. Project objective summaries\n"
+                    "## 7. Document boundary",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            global_path = env.suite_root / "PROJECT_CONTEXT.md"
+            global_path.write_text(
+                global_path.read_text(encoding="utf-8").replace(
+                    "## 5. Document boundary",
+                    "## 6. Project objective summaries\n\n"
+                    "| Project/group | Current role | Active objective | Pending direction |\n"
+                    "|---|---|---|---|\n"
+                    "| SBM-MANAGER | Enterprise management frontend | "
+                    "`SBM-MANAGER-001` | QA completion |\n"
+                    "| SBM-SUITE/context | Global governance/orchestration | N/A | "
+                    "Git Flow governance |\n\n"
+                    "## 7. Document boundary",
+                ),
+                encoding="utf-8",
+            )
+            patches = _activation_patches(activated_objective, suite_only=True)
+            global_patch = json.loads(patches[GLOBAL_PROJECT_PATCH])
+            global_patch["operations"].append(
+                {
+                    "operation": "replace_section",
+                    "heading": "## 6. Project objective summaries",
+                    "content": (
+                        "## 6. Project objective summaries\n\n"
+                        "| Project/group | Current role | Active objective | Pending direction |\n"
+                        "|---|---|---|---|\n"
+                        "| SBM-MANAGER | Enterprise management frontend | "
+                        "`SBM-MANAGER-001` | QA completion |\n"
+                        "| SBM-SUITE/context | Global governance/orchestration | "
+                        "`OBJ-CTX-038` | Git Flow governance |\n"
+                    ),
+                }
+            )
+            patches[GLOBAL_PROJECT_PATCH] = json.dumps(global_patch)
+            _create_upgrade_zip(
+                env.zip_path,
+                patches,
+                project_name="sbm-suite-context",
+                lifecycle_phase="objective-activation",
+                objectives=[activated_objective],
+            )
+
+            response = _run_suite_context_upgrade(env)
+
+            self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
+            markdown = (env.suite_root / "PROJECT_CONTEXT.md").read_text(
+                encoding="utf-8"
+            )
+            active_section = markdown.split("## 3. Active objectives", 1)[1].split(
+                "## 4. Pending objectives", 1
+            )[0]
+            pending_section = markdown.split("## 4. Pending objectives", 1)[1].split(
+                "## 6. Project objective summaries", 1
+            )[0]
+            summary_section = markdown.split(
+                "## 6. Project objective summaries", 1
+            )[1].split("## 7. Document boundary", 1)[0]
+            self.assertEqual(active_section.count("OBJ-CTX-038"), 1)
+            self.assertIn("FEATURE-standardizes-suite-governance", active_section)
+            self.assertNotIn("OBJ-CTX-038", pending_section)
+            self.assertEqual(summary_section.count("`OBJ-CTX-038`"), 1)
+
+    def test_suite_context_activation_moves_atomic_shared_branch_batch(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            pending_objectives = [
+                {
+                    **_activation_objective("OBJ-CTX-012"),
+                    "objective": "Create the SBM Agent bootstrap",
+                    "branch": "FEATURE-adds-sbm-agent-bootstrap",
+                },
+                {
+                    **_activation_objective("OBJ-CTX-002"),
+                    "objective": "Enable transversal Context tooling",
+                    "branch": "FEATURE-automates-cross-project-flows",
+                },
+            ]
+            activated_objectives = [
+                {
+                    **objective,
+                    "status": "active",
+                    "branch": "FEATURE-standardizes-suite-governance",
+                }
+                for objective in pending_objectives
+            ]
+            _seed_pending_objectives(env, pending_objectives, suite_only=True)
+            format_path = env.suite_root / "FORMAT_CONTEXT.md"
+            format_path.write_text(
+                format_path.read_text(encoding="utf-8").replace(
+                    "## 4. Pending objectives\n## 5. Document boundary",
+                    "## 4. Pending objectives\n"
+                    "## 6. Project objective summaries\n"
+                    "## 7. Document boundary",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            global_path = env.suite_root / "PROJECT_CONTEXT.md"
+            global_path.write_text(
+                global_path.read_text(encoding="utf-8").replace(
+                    "## 5. Document boundary",
+                    "## 6. Project objective summaries\n\n"
+                    "| Project/group | Current role | Active objective | Pending direction |\n"
+                    "|---|---|---|---|\n"
+                    "| SBM-SUITE/context | Global governance/orchestration | N/A | "
+                    "Transversal governance |\n\n"
+                    "## 7. Document boundary",
+                ),
+                encoding="utf-8",
+            )
+            patches = _suite_activation_batch_patches(activated_objectives)
+            global_patch = json.loads(patches[GLOBAL_PROJECT_PATCH])
+            global_patch["operations"].append(
+                {
+                    "operation": "replace_section",
+                    "heading": "## 6. Project objective summaries",
+                    "content": (
+                        "## 6. Project objective summaries\n\n"
+                        "| Project/group | Current role | Active objective | Pending direction |\n"
+                        "|---|---|---|---|\n"
+                        "| SBM-SUITE/context | Global governance/orchestration | "
+                        "`OBJ-CTX-012`, `OBJ-CTX-002` | Transversal governance |\n"
+                    ),
+                }
+            )
+            patches[GLOBAL_PROJECT_PATCH] = json.dumps(global_patch)
+            _create_upgrade_zip(
+                env.zip_path,
+                patches,
+                project_name="sbm-suite-context",
+                lifecycle_phase="objective-activation",
+                objectives=activated_objectives,
+            )
+
+            response = _run_suite_context_upgrade(env)
+
+            self.assertEqual(response.updated_files, [GLOBAL_PROJECT])
+            markdown = global_path.read_text(encoding="utf-8")
+            active_section = markdown.split("## 3. Active objectives", 1)[1].split(
+                "## 4. Pending objectives", 1
+            )[0]
+            pending_section = markdown.split("## 4. Pending objectives", 1)[1].split(
+                "## 6. Project objective summaries", 1
+            )[0]
+            summary_section = markdown.split(
+                "## 6. Project objective summaries", 1
+            )[1].split("## 7. Document boundary", 1)[0]
+            for objective_id in ("OBJ-CTX-012", "OBJ-CTX-002"):
+                self.assertEqual(active_section.count(objective_id), 1)
+                self.assertNotIn(objective_id, pending_section)
+            self.assertEqual(
+                active_section.count("FEATURE-standardizes-suite-governance"), 2
+            )
+            self.assertIn("`OBJ-CTX-012`, `OBJ-CTX-002`", summary_section)
+
+    def test_suite_context_activation_batch_is_atomic_when_one_id_is_missing(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            env = UpgradeEnvironment(Path(temporary_directory))
+            pending = {
+                **_activation_objective("OBJ-CTX-012"),
+                "objective": "Create the SBM Agent bootstrap",
+                "branch": "FEATURE-adds-sbm-agent-bootstrap",
+            }
+            requested = [
+                {
+                    **pending,
+                    "status": "active",
+                    "branch": "FEATURE-standardizes-suite-governance",
+                },
+                {
+                    **_activation_objective("OBJ-CTX-002"),
+                    "objective": "Enable transversal Context tooling",
+                    "branch": "FEATURE-standardizes-suite-governance",
+                },
+            ]
+            _seed_pending_objectives(env, [pending], suite_only=True)
+            before = (env.suite_root / "PROJECT_CONTEXT.md").read_bytes()
+            _create_upgrade_zip(
+                env.zip_path,
+                _suite_activation_batch_patches(requested),
+                project_name="sbm-suite-context",
+                lifecycle_phase="objective-activation",
+                objectives=requested,
+            )
+
+            with self.assertRaisesRegex(
+                ContextValidationError,
+                "pending objective must exist exactly once: OBJ-CTX-002",
+            ):
+                _run_suite_context_upgrade(env)
+
+            self.assertEqual(
+                (env.suite_root / "PROJECT_CONTEXT.md").read_bytes(), before
+            )
+
+    def test_suite_activation_summary_preserves_unrelated_cells(self):
+        original = (
+            "## 6. Project objective summaries\n\n"
+            "| Project/group | Current role | Active objective | Pending direction |\n"
+            "|---|---|---|---|\n"
+            "| SBM-SUITE/context | Global governance/orchestration | N/A | "
+            "Git Flow governance |\n"
+        )
+        patched = original.replace(
+            "Global governance/orchestration | N/A",
+            "Changed unrelated role | `OBJ-CTX-038`",
+        )
+        objective = {
+            "objective_id": "OBJ-CTX-038",
+            "objective": "Standardize transversal Git Flow governance",
+            "status": "active",
+            "priority": 5,
+            "target_date": "N/A",
+            "branch": "FEATURE-standardizes-suite-governance",
+        }
+
+        with self.assertRaisesRegex(ContextValidationError, "unrelated table row"):
+            _validate_preserved_tables(
+                original,
+                patched,
+                GLOBAL_PROJECT,
+                "sbm-suite-context",
+                "SBM-SUITE",
+                "objective-activation",
+                [objective],
+            )
+
     def test_objective_activation_rejects_missing_pending_objective(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
@@ -1670,7 +2100,7 @@ class ContextUpgradeTests(unittest.TestCase):
             ):
                 env.run()
 
-    def test_objective_activation_rejects_changes_beyond_status(self):
+    def test_objective_activation_rejects_changes_beyond_status_and_branch(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             env = UpgradeEnvironment(Path(temporary_directory))
             objective = _activation_objective()
@@ -1692,7 +2122,7 @@ class ContextUpgradeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ContextValidationError,
-                "may change only the status cell: OBJ-CTX-013",
+                "may change only the status and explicit branch cells: OBJ-CTX-013",
             ):
                 env.run()
 

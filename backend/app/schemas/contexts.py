@@ -17,7 +17,7 @@ from pydantic import (
 
 _OBJECTIVE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _BRANCH_PATTERN = re.compile(
-    r"^(FEATURE|BUGFIX|HOTFIX)-[a-z0-9]+(?:-[a-z0-9]+){0,3}$"
+    r"^(FEATURE|BUGFIX|HOTFIX|RELEASE)-[a-z0-9]+(?:-[a-z0-9]+){0,3}$"
 )
 
 
@@ -28,11 +28,15 @@ class ContextObjective(BaseModel):
     )
 
     objective_id: str = Field(min_length=1)
+    project: Optional[str] = None
     objective: Optional[str] = None
-    status: Optional[Literal["active", "pending"]] = None
+    status: Optional[
+        Literal["active", "pending", "completed", "registered", "cancelled", "deleted"]
+    ] = None
     priority: Optional[int] = Field(default=None, ge=0, le=5)
     target_date: Optional[str] = None
     branch: Optional[str] = None
+    documentation: Optional[str] = None
 
     @field_validator("objective_id")
     @classmethod
@@ -70,7 +74,7 @@ class ContextObjective(BaseModel):
             return None
         if not _BRANCH_PATTERN.fullmatch(value):
             raise ValueError(
-                "branch must match FEATURE|BUGFIX|HOTFIX-<slug-max-4-words>"
+                "branch must match FEATURE|BUGFIX|HOTFIX|RELEASE-<slug-max-4-words>"
             )
         return value
 
@@ -83,7 +87,7 @@ class ContextQADecision(BaseModel):
 
     status: Literal["passed", "failed", "not-applicable"]
     applicable: bool
-    workflow_path: Literal["scripts/qa-check.sh"]
+    workflow_path: Literal["scripts/qa-check.sh", "QA/qa-full.sh"]
     evidence_file: Literal["qa-results.md"]
     evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     reason: str = Field(min_length=1)
@@ -110,6 +114,10 @@ class ContextExportRequest(BaseModel):
     lifecycle_phase: Literal[
         "planning-activation",
         "objective-activation",
+        "objective-registration",
+        "objective-completion",
+        "objective-deletion",
+        "objective-update",
         "implementation-progress",
         "implementation-closure",
     ]
@@ -160,32 +168,26 @@ class ContextExportRequest(BaseModel):
                 "present and evidence when user_prompt is absent"
             )
 
-        if self.lifecycle_phase == "implementation-closure":
-            if self.qa is None:
-                raise ValueError(
-                    "implementation-closure requires structured qa"
-                )
+        if self.qa is not None:
             if self.qa.status == "failed":
-                raise ValueError(
-                    "implementation-closure is blocked by failed qa"
-                )
+                raise ValueError(f"{self.lifecycle_phase} is blocked by failed qa")
             qa_results = self.qa_results or ""
-            evidence_sha256 = hashlib.sha256(
-                qa_results.encode("utf-8")
-            ).hexdigest()
+            evidence_sha256 = hashlib.sha256(qa_results.encode("utf-8")).hexdigest()
             if self.qa.evidence_sha256 != evidence_sha256:
                 restored_qa_results = f"{qa_results}\n"
-                restored_sha256 = hashlib.sha256(
-                    restored_qa_results.encode("utf-8")
-                ).hexdigest()
+                restored_sha256 = hashlib.sha256(restored_qa_results.encode("utf-8")).hexdigest()
                 if self.qa.evidence_sha256 != restored_sha256:
-                    raise ValueError(
-                        "qa evidence_sha256 must match qa_results"
-                    )
+                    raise ValueError("qa evidence_sha256 must match qa_results")
                 self.qa_results = restored_qa_results
-        elif self.qa is not None:
+        elif self.lifecycle_phase == "implementation-closure":
+            raise ValueError("implementation-closure requires structured qa")
+        if self.lifecycle_phase == "implementation-closure" and (
+            self.qa is None
+            or self.qa.status != "passed"
+            or self.qa.workflow_path != "QA/qa-full.sh"
+        ):
             raise ValueError(
-                "qa is allowed only for implementation-closure"
+                "implementation-closure requires passed full-suite qa"
             )
 
         objective_ids = [
@@ -197,6 +199,10 @@ class ContextExportRequest(BaseModel):
         if self.lifecycle_phase in {
             "planning-activation",
             "objective-activation",
+            "objective-registration",
+            "objective-completion",
+            "objective-deletion",
+            "objective-update",
         }:
             required_fields = (
                 "objective",
@@ -223,21 +229,28 @@ class ContextExportRequest(BaseModel):
                         + ", ".join(missing)
                     )
         if self.lifecycle_phase == "objective-activation":
-            if len(self.objectives) != 1:
+            if any(objective.status != "active" for objective in self.objectives):
                 raise ValueError(
-                    "objective-activation requires exactly one objective"
+                    "objective-activation requested status must be active for every objective"
                 )
-            if self.objectives[0].status != "active":
-                raise ValueError(
-                    "objective-activation requested status must be active"
-                )
-        elif self.lifecycle_phase != "planning-activation" and len(
-            self.objectives
-        ) != 1:
+        desired_status = {
+            "objective-registration": "registered",
+            "objective-completion": "completed",
+            "objective-deletion": "deleted",
+        }.get(self.lifecycle_phase)
+        if desired_status is not None and any(
+            objective.status != desired_status for objective in self.objectives
+        ):
             raise ValueError(
-                f"{self.lifecycle_phase} currently supports exactly one objective"
+                f"{self.lifecycle_phase} requested status must be {desired_status} for every objective"
             )
-
+        if self.lifecycle_phase == "objective-update" and any(
+            objective.status not in {"pending", "active"}
+            for objective in self.objectives
+        ):
+            raise ValueError(
+                "objective-update requested status must be pending or active"
+            )
         return self
 
 
@@ -252,6 +265,10 @@ class ContextExportResponse(BaseModel):
     lifecycle_phase: Literal[
         "planning-activation",
         "objective-activation",
+        "objective-registration",
+        "objective-completion",
+        "objective-deletion",
+        "objective-update",
         "implementation-progress",
         "implementation-closure",
     ]

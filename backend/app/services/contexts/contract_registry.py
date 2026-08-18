@@ -19,6 +19,10 @@ from app.services.project_registry import (
 LIFECYCLE_PHASES = (
     "planning-activation",
     "objective-activation",
+    "objective-registration",
+    "objective-completion",
+    "objective-deletion",
+    "objective-update",
     "implementation-progress",
     "implementation-closure",
 )
@@ -76,7 +80,13 @@ PATCH_DEFINITIONS = {
             "SBM-SUITE/context/COMPLETED_OBJECTIVES.md",
             "## 3. Global `COMPLETED_OBJECTIVES.md`",
             allowed_operations=("append_to_section",),
-            lifecycle_phases=("implementation-closure",),
+            lifecycle_phases=(
+                "planning-activation",
+                "implementation-closure",
+                "objective-registration",
+                "objective-completion",
+                "objective-deletion",
+            ),
         ),
         _patch(
             "patches/suite-context.json",

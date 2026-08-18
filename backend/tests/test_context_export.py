@@ -762,7 +762,7 @@ class ContextExportRequestTests(unittest.TestCase):
         return {
             "status": status,
             "applicable": applicable,
-            "workflow_path": "scripts/qa-check.sh",
+            "workflow_path": "QA/qa-full.sh",
             "evidence_file": "qa-results.md",
             "evidence_sha256": hashlib.sha256(
                 evidence.encode("utf-8")
@@ -801,13 +801,13 @@ class ContextExportRequestTests(unittest.TestCase):
         if lifecycle_phase == "implementation-closure":
             canonical_qa_results = (
                 "# QA Results\n\n"
-                "QA status: not-applicable\n"
+                "Overall status: passed\n"
             )
             request_fields = {
                 "qa_results": canonical_qa_results.rstrip("\n"),
                 "qa": self._qa_decision(
-                    "not-applicable",
-                    False,
+                    "passed",
+                    True,
                     canonical_qa_results,
                 ),
             }
@@ -925,6 +925,47 @@ class ContextExportRequestTests(unittest.TestCase):
             },
         )
 
+    def test_objective_activation_accepts_atomic_shared_branch_batch(self):
+        objectives = [
+            {
+                **self._planning_objective(objective_id),
+                "status": "active",
+                "branch": "FEATURE-standardizes-suite-governance",
+            }
+            for objective_id in ("OBJ-CTX-012", "OBJ-CTX-002")
+        ]
+
+        request = ContextExportRequest(
+            project_name="sbm-suite-context",
+            workflow="context-deploy",
+            lifecycle_phase="objective-activation",
+            objectives=objectives,
+        )
+
+        self.assertEqual(
+            [objective.objective_id for objective in request.objectives],
+            ["OBJ-CTX-012", "OBJ-CTX-002"],
+        )
+        self.assertEqual(
+            {objective.branch for objective in request.objectives},
+            {"FEATURE-standardizes-suite-governance"},
+        )
+
+    def test_objective_activation_rejects_duplicate_batch_ids(self):
+        objective = {
+            **self._planning_objective("OBJ-CTX-012"),
+            "status": "active",
+            "branch": "FEATURE-standardizes-suite-governance",
+        }
+
+        with self.assertRaisesRegex(ValueError, "duplicate objective_id"):
+            ContextExportRequest(
+                project_name="sbm-suite-context",
+                workflow="context-deploy",
+                lifecycle_phase="objective-activation",
+                objectives=[objective, objective],
+            )
+
     def test_objective_activation_manifest_preserves_explicit_transition(self):
         request = self._request("objective-activation")
         objective = request.objectives[0].model_dump(exclude_none=True)
@@ -982,35 +1023,103 @@ class ContextExportRequestTests(unittest.TestCase):
                 objectives=[self._planning_objective()],
             )
 
-    def test_objective_activation_rejects_multiple_objectives(self):
-        with self.assertRaisesRegex(ValueError, "requires exactly one objective"):
+    def test_objective_activation_accepts_multiple_objectives(self):
+        request = ContextExportRequest(
+            project_name="dp-api",
+            workflow="context-deploy",
+            lifecycle_phase="objective-activation",
+            objectives=[
+                {**self._planning_objective("OBJ-001"), "status": "active"},
+                {
+                    **self._planning_objective("OBJ-002"),
+                    "status": "active",
+                    "branch": "FEATURE-enable-orders",
+                },
+            ],
+        )
+
+        self.assertEqual(len(request.objectives), 2)
+
+    def test_progress_accepts_multiple_objectives(self):
+        request = ContextExportRequest(
+            project_name="dp-api",
+            workflow="context-deploy",
+            lifecycle_phase="implementation-progress",
+            objectives=[
+                {"objective_id": "OBJ-001", "project": "DP-API"},
+                {"objective_id": "OBJ-002", "project": "SBM-API"},
+            ],
+        )
+        self.assertEqual(len(request.objectives), 2)
+
+    def test_flexible_batch_lifecycle_status_contracts(self):
+        for lifecycle_phase, desired_status in (
+            ("objective-registration", "registered"),
+            ("objective-completion", "completed"),
+            ("objective-deletion", "deleted"),
+            ("objective-update", "pending"),
+        ):
+            with self.subTest(lifecycle_phase=lifecycle_phase):
+                request = ContextExportRequest(
+                    project_name="sbm-suite-context",
+                    workflow="context-deploy",
+                    lifecycle_phase=lifecycle_phase,
+                    objectives=[
+                        {**self._planning_objective("OBJ-001"), "status": desired_status},
+                        {
+                            **self._planning_objective("OBJ-002"),
+                            "project": "SBM-API",
+                            "status": desired_status,
+                        },
+                    ],
+                )
+                self.assertEqual(len(request.objectives), 2)
+
+        with self.assertRaisesRegex(ValueError, "pending or active"):
             ContextExportRequest(
                 project_name="dp-api",
                 workflow="context-deploy",
-                lifecycle_phase="objective-activation",
+                lifecycle_phase="objective-update",
                 objectives=[
-                    {**self._planning_objective("OBJ-001"), "status": "active"},
-                    {
-                        **self._planning_objective("OBJ-002"),
-                        "status": "active",
-                        "branch": "FEATURE-enable-orders",
-                    },
+                    {**self._planning_objective("OBJ-003"), "status": "completed"}
                 ],
             )
 
-    def test_progress_rejects_multiple_objectives(self):
-        with self.assertRaisesRegex(ValueError, "exactly one objective"):
-            ContextExportRequest(
-                project_name="dp-api",
-                workflow="context-deploy",
-                lifecycle_phase="implementation-progress",
-                objectives=[
-                    {"objective_id": "OBJ-001"},
-                    {"objective_id": "OBJ-002"},
-                ],
-            )
+    def test_planning_accepts_direct_pending_active_completed_multi_project_batch(self):
+        request = ContextExportRequest(
+            project_name="sbm-suite-context",
+            workflow="context-deploy",
+            lifecycle_phase="planning-activation",
+            objectives=[
+                {**self._planning_objective("OBJ-DP"), "project": "DP-API", "status": "pending"},
+                {**self._planning_objective("OBJ-API"), "project": "SBM-API", "status": "active"},
+                {**self._planning_objective("OBJ-DB"), "project": "SBM-DB", "status": "completed"},
+            ],
+        )
+        self.assertEqual(
+            [objective.status for objective in request.objectives],
+            ["pending", "active", "completed"],
+        )
 
-    def test_closure_accepts_not_applicable_qa_at_endpoint(self):
+    def test_closure_accepts_multiple_objectives_with_full_suite_qa(self):
+        evidence = "# QA Results\n\nOverall status: passed\n"
+        request = ContextExportRequest(
+            project_name="sbm-suite-context",
+            workflow="context-deploy",
+            lifecycle_phase="implementation-closure",
+            objectives=[
+                {"objective_id": "OBJ-001", "project": "DP-API"},
+                {"objective_id": "OBJ-002", "project": "SBM-API"},
+            ],
+            qa_results=evidence,
+            qa={
+                **self._qa_decision("passed", True, evidence),
+                "workflow_path": "QA/qa-full.sh",
+            },
+        )
+        self.assertEqual(len(request.objectives), 2)
+
+    def test_closure_accepts_full_suite_qa_at_endpoint(self):
         app = FastAPI()
         app.include_router(router)
         request = self._request("implementation-closure")
@@ -1060,7 +1169,7 @@ class ContextExportRequestTests(unittest.TestCase):
 
     def test_closure_rejects_incoherent_qa_applicability(self):
         request = self._request("implementation-closure").model_dump()
-        request["qa"]["applicable"] = True
+        request["qa"]["applicable"] = False
         app = FastAPI()
         app.include_router(router)
 
@@ -1178,6 +1287,10 @@ class ContextContractMappingTests(unittest.TestCase):
             (
                 "planning-activation",
                 "objective-activation",
+                "objective-registration",
+                "objective-completion",
+                "objective-deletion",
+                "objective-update",
                 "implementation-progress",
                 "implementation-closure",
             ),
