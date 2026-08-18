@@ -82,6 +82,19 @@ OBJECTIVE_CONTEXT_PATCHES = frozenset(
 COMPLETED_OBJECTIVES_PATCH = "patches/completed-objectives.json"
 ACTIVE_OBJECTIVE_HEADING = "## 3. Active objectives"
 PENDING_OBJECTIVE_HEADING = "## 4. Pending objectives"
+ACTIVE_OBJECTIVE_COLUMN = "Active objective"
+PENDING_OBJECTIVES_COLUMN = "Pending objectives"
+PROJECT_OBJECTIVE_SUMMARY_MUTABLE_COLUMNS = {
+    "| Project | Purpose | Active objective | Pending objectives | "
+    "Branch | Main context | QA context | Documentation |": {
+        ACTIVE_OBJECTIVE_COLUMN,
+        PENDING_OBJECTIVES_COLUMN,
+        "Branch",
+    },
+    "| Project/group | Current role | Active objective | Pending direction |": {
+        ACTIVE_OBJECTIVE_COLUMN,
+    },
+}
 COMPLETED_OBJECTIVES_HEADING = "## 1. Completed objectives by project"
 COMPLETED_OBJECTIVES_TABLE_HEADER = (
     "| Objective ID | Project | Objective | Final status | Priority | Branch | "
@@ -286,6 +299,10 @@ def _validate_manifest_objectives(
     if lifecycle_phase in {
         "planning-activation",
         "objective-activation",
+        "objective-registration",
+        "objective-completion",
+        "objective-deletion",
+        "objective-update",
     }:
         required_fields = (
             "objective",
@@ -309,20 +326,29 @@ def _validate_manifest_objectives(
                     f"{lifecycle_label} fields: "
                     + ", ".join(missing)
                 )
-    if lifecycle_phase == "objective-activation":
-        if len(objectives) != 1:
+    if lifecycle_phase in {"objective-activation", "objective-update"}:
+        if any(objective["status"] != "active" for objective in objectives):
             raise ContextValidationError(
-                "objective-activation requires exactly one objective"
+                "objective-activation requested status must be active for every objective"
             )
-        if objectives[0]["status"] != "active":
-            raise ContextValidationError(
-                "objective-activation requested status must be active"
-            )
-    elif lifecycle_phase != "planning-activation" and len(objectives) != 1:
+    desired_status = {
+        "objective-registration": "registered",
+        "objective-completion": "completed",
+        "objective-deletion": "deleted",
+    }.get(lifecycle_phase)
+    if desired_status is not None and any(
+        objective["status"] != desired_status for objective in objectives
+    ):
         raise ContextValidationError(
-            f"{lifecycle_phase} currently supports exactly one objective"
+            f"{lifecycle_phase} requested status must be {desired_status} for every objective"
         )
-
+    if lifecycle_phase == "objective-update" and any(
+        objective["status"] not in {"pending", "active"}
+        for objective in objectives
+    ):
+        raise ContextValidationError(
+            "objective-update requested status must be pending or active"
+        )
     return objectives
 
 
@@ -523,18 +549,55 @@ def validate_upgrade_manifest(
             + ", ".join(sorted(phase_forbidden))
         )
 
-    if lifecycle_phase == "planning-activation" and (
-        COMPLETED_OBJECTIVES_PATCH in actual_files
-    ):
-        raise ContextValidationError(
-            "planning-activation forbids completed-objectives.json"
-        )
+    planning_completed = lifecycle_phase == "planning-activation" and any(
+        objective.get("status") == "completed" for objective in objectives
+    )
+    if lifecycle_phase == "planning-activation":
+        if planning_completed and COMPLETED_OBJECTIVES_PATCH not in actual_files:
+            raise ContextValidationError(
+                "planning-activation direct completion requires completed-objectives.json"
+            )
+        if not planning_completed and COMPLETED_OBJECTIVES_PATCH in actual_files:
+            raise ContextValidationError(
+                "planning-activation forbids completed-objectives.json without completed objectives"
+            )
 
     if lifecycle_phase == "implementation-progress" and (
         COMPLETED_OBJECTIVES_PATCH in actual_files
     ):
         raise ContextValidationError(
             "implementation-progress forbids completed-objectives.json"
+        )
+    if lifecycle_phase in {
+        "objective-registration",
+        "objective-completion",
+        "objective-deletion",
+    }:
+        required_terminal_patches = {
+            COMPLETED_OBJECTIVES_PATCH,
+            *_objective_context_patches(project_name),
+        }
+        missing_terminal = required_terminal_patches - actual_files
+        if missing_terminal:
+            raise ContextValidationError(
+                f"{lifecycle_phase} is missing required patches: "
+                + ", ".join(sorted(missing_terminal))
+            )
+    qa_payload = manifest.get("qa")
+    if qa_payload is not None:
+        try:
+            qa = ContextQADecision.model_validate(qa_payload)
+        except ValueError as exc:
+            raise ContextValidationError(
+                f"{lifecycle_phase} contains invalid full-suite QA"
+            ) from exc
+        if qa.status != "passed" or qa.workflow_path != "QA/qa-full.sh":
+            raise ContextValidationError(
+                f"{lifecycle_phase} requires passed full-suite QA when QA is attached"
+            )
+    elif lifecycle_phase == "implementation-closure":
+        raise ContextValidationError(
+            "implementation-closure requires structured full-suite QA"
         )
     if lifecycle_phase == "implementation-closure":
         closure_patches = _closure_required_patches(project_name)
@@ -543,16 +606,6 @@ def validate_upgrade_manifest(
             raise ContextValidationError(
                 "implementation-closure is missing required patches: "
                 + ", ".join(sorted(missing_closure_patches))
-            )
-        try:
-            qa = ContextQADecision.model_validate(manifest.get("qa"))
-        except ValueError as exc:
-            raise ContextValidationError(
-                "implementation-closure requires structured QA"
-            ) from exc
-        if qa.status == "failed":
-            raise ContextValidationError(
-                "implementation-closure is blocked by failed QA"
             )
     if not set(updated_files).issubset(declared_allowlist):
         raise ContextValidationError(
@@ -922,14 +975,14 @@ def validate_objective_lifecycle_patches(
         missing_objective_patches = objective_patches - actual_files
         if missing_objective_patches:
             raise ContextValidationError(
-                "objective-activation requires objective context patches: "
+                f"{lifecycle_phase} requires objective context patches: "
                 + ", ".join(sorted(missing_objective_patches))
             )
         for patch_path in sorted(objective_patches):
             headings = _patch_operation_headings(staging_directory, patch_path)
             if not objective_headings.issubset(headings):
                 raise ContextValidationError(
-                    "objective-activation must replace both active and pending "
+                    f"{lifecycle_phase} must replace both active and pending "
                     f"objective sections: {patch_path}"
                 )
 
@@ -945,14 +998,29 @@ def validate_objective_lifecycle_patches(
         )
 
     if completed_present:
+        completed_headings = _patch_operation_headings(
+            staging_directory,
+            COMPLETED_OBJECTIVES_PATCH,
+        )
+        if COMPLETED_OBJECTIVES_HEADING not in completed_headings:
+            raise ContextValidationError(
+                "completed-objectives.json must target the completed objectives history section"
+            )
+
+    if completed_present and lifecycle_phase in {
+        "implementation-closure",
+        "objective-registration",
+        "objective-completion",
+        "objective-deletion",
+    }:
         if not objective_patches.issubset(actual_files):
             if is_suite_scoped_project(project_name):
                 raise ContextValidationError(
-                    "Completed suite objective closure requires the global "
+                    "Terminal suite objective transition requires the global "
                     "PROJECT_CONTEXT patch"
                 )
             raise ContextValidationError(
-                "Completed objective closure requires global and project "
+                "Terminal objective transition requires global and project "
                 "PROJECT_CONTEXT patches"
             )
         completed_headings = _patch_operation_headings(
@@ -966,11 +1034,18 @@ def validate_objective_lifecycle_patches(
             )
         if not objective_context_changed:
             raise ContextValidationError(
-                "Completed objective closure must remove the objective from "
+                "Terminal objective transition must remove the objective from "
                 "operational objective sections"
             )
 
-    if lifecycle_phase != "implementation-closure" and completed_present:
+    if lifecycle_phase not in {
+        "planning-activation",
+        "implementation-closure",
+        "objective-registration",
+        "objective-completion",
+        "objective-deletion",
+        "objective-update",
+    } and completed_present:
         raise ContextValidationError(
             f"{lifecycle_phase} forbids completed-objectives.json"
         )
@@ -1128,6 +1203,7 @@ def _validate_planning_objective_fields(
     global_context: bool,
     project_directory: str,
     lifecycle_phase: str = "planning-activation",
+    allow_branch_mismatch: bool = False,
 ) -> None:
     cells = _planning_objective_row(
         markdown,
@@ -1151,7 +1227,8 @@ def _validate_planning_objective_fields(
             "target_date": cells[5],
             "branch": cells[6],
         }
-        if actual["project"].casefold() != project_directory.casefold():
+        expected_project = objective.get("project") or project_directory
+        if actual["project"].casefold() != expected_project.casefold():
             raise ContextValidationError(
                 f"{lifecycle_phase} project column does not match the selected "
                 f"project: {objective['objective_id']}"
@@ -1174,6 +1251,8 @@ def _validate_planning_objective_fields(
         "target_date": objective["target_date"],
         "branch": objective["branch"],
     }
+    if allow_branch_mismatch:
+        expected.pop("branch")
     mismatches = [
         field for field, value in expected.items() if actual.get(field) != value
     ]
@@ -1347,14 +1426,111 @@ def _prepare_completed_objectives_operation(
     return current_markdown
 
 
+def _selected_project_summary_row(
+    row: str,
+    project_name: str,
+    project_directory: str,
+) -> bool:
+    cells = _table_row_cells(row)
+    if not cells:
+        return False
+    aliases = {project_name.casefold(), project_directory.casefold()}
+    if project_name.casefold() == "sbm-suite-context":
+        aliases |= {"sbm-suite", "sbm-suite/context"}
+    return cells[0].strip("` ").casefold() in aliases
+
+
+def _activation_summary_values_allowed(
+    changed: set[str],
+    headers: list[str],
+    original_cells: list[str],
+    patched_cells: list[str],
+    objectives: list[dict],
+) -> bool:
+    objective_ids = [objective["objective_id"] for objective in objectives]
+    values = dict(zip(headers, patched_cells, strict=True))
+
+    if ACTIVE_OBJECTIVE_COLUMN in changed:
+        active_value = values[ACTIVE_OBJECTIVE_COLUMN].replace("`", "")
+        if any(objective_id not in active_value for objective_id in objective_ids):
+            return False
+
+    if "Branch" in changed:
+        branches = {objective.get("branch") for objective in objectives}
+        if len(branches) != 1 or values["Branch"].strip("` ") not in branches:
+            return False
+
+    if PENDING_OBJECTIVES_COLUMN in changed:
+        original_values = dict(zip(headers, original_cells, strict=True))
+        pending_before = original_values[PENDING_OBJECTIVES_COLUMN]
+        pending_after = values[PENDING_OBJECTIVES_COLUMN]
+        if any(
+            objective_id not in pending_before or objective_id in pending_after
+            for objective_id in objective_ids
+        ):
+            return False
+
+    return True
+
+
+def _activation_summary_change_allowed(
+    header: str,
+    original_row: str,
+    patched_rows: list[str],
+    project_name: str,
+    project_directory: str,
+    objectives: list[dict],
+) -> bool:
+    if header not in PROJECT_OBJECTIVE_SUMMARY_MUTABLE_COLUMNS:
+        return False
+    if not _selected_project_summary_row(
+        original_row, project_name, project_directory
+    ):
+        return False
+
+    original_cells = _table_row_cells(original_row)
+    matches = [
+        row
+        for row in patched_rows
+        if _selected_project_summary_row(row, project_name, project_directory)
+    ]
+    if len(matches) != 1:
+        return False
+
+    patched_cells = _table_row_cells(matches[0])
+    headers = _table_row_cells(header)
+    if len(original_cells) != len(headers) or len(patched_cells) != len(headers):
+        return False
+
+    changed = {
+        column
+        for column, before, after in zip(
+            headers, original_cells, patched_cells, strict=True
+        )
+        if before != after
+    }
+    if not changed <= PROJECT_OBJECTIVE_SUMMARY_MUTABLE_COLUMNS[header]:
+        return False
+
+    return _activation_summary_values_allowed(
+        changed,
+        headers,
+        original_cells,
+        patched_cells,
+        objectives,
+    )
+
+
 def _validate_preserved_tables(
     original: str,
     patched: str,
     archive_target: str,
     project_name: str,
     project_directory: str,
-    objective_ids: list[str],
+    lifecycle_phase: str,
+    objectives: list[dict],
 ) -> None:
+    objective_ids = [objective["objective_id"] for objective in objectives]
     original_tables = _markdown_table_entries(original)
     patched_tables = _markdown_table_entries(patched)
     patched_by_heading: dict[str, list[tuple[str, list[str]]]] = {}
@@ -1396,12 +1572,34 @@ def _validate_preserved_tables(
                     for marker in (project_name, project_directory)
                 )
             )
-            if not requested_objective_row and not current_project_summary:
-                if row not in patched_rows:
-                    raise ContextValidationError(
-                        "Patch removes or changes an unrelated table row: "
-                        f"{archive_target} {heading}"
-                    )
+            activation_project_summary = (
+                lifecycle_phase == "objective-activation"
+                and archive_target == "SBM-SUITE/context/PROJECT_CONTEXT.md"
+                and _activation_summary_change_allowed(
+                    header,
+                    row,
+                    patched_rows,
+                    project_name,
+                    project_directory,
+                    objectives,
+                )
+            )
+            if (
+                lifecycle_phase == "objective-activation"
+                and archive_target == "SBM-SUITE/context/PROJECT_CONTEXT.md"
+                and header in PROJECT_OBJECTIVE_SUMMARY_MUTABLE_COLUMNS
+            ):
+                current_project_summary = False
+            if (
+                not requested_objective_row
+                and not current_project_summary
+                and not activation_project_summary
+                and row not in patched_rows
+            ):
+                raise ContextValidationError(
+                    "Patch removes or changes an unrelated table row: "
+                    f"{archive_target} {heading}"
+                )
 
     reusable_heading = "## Reusable components"
     reusable_tables = [
@@ -1474,34 +1672,47 @@ def _validate_objective_transition(
 
     completed_ids = _objective_ids(completed_markdown)
 
-    if lifecycle_phase == "implementation-closure":
-        objective_id = objective_ids[0]
+    terminal_status = {
+        "implementation-closure": "completed",
+        "objective-completion": "completed",
+        "objective-registration": "registered",
+        "objective-deletion": "deleted",
+    }.get(lifecycle_phase)
+    if terminal_status is not None:
         for target in context_targets:
             active_before = _objective_ids(
                 _section_markdown(originals[target], ACTIVE_OBJECTIVE_HEADING)
             )
-            if objective_id not in active_before:
-                raise ContextValidationError(
-                    f"Objective {objective_id} must exist as active before closure"
-                )
-            if objective_id in _objective_ids(staged[target]):
-                raise ContextValidationError(
-                    f"Objective {objective_id} was not removed during closure"
-                )
+            pending_before = _objective_ids(
+                _section_markdown(originals[target], PENDING_OBJECTIVE_HEADING)
+            )
+            staged_target_ids = _objective_ids(staged[target])
+            for objective_id in objective_ids:
+                source_count = active_before.count(objective_id) + pending_before.count(objective_id)
+                if source_count != 1 or (
+                    lifecycle_phase == "implementation-closure"
+                    and objective_id not in active_before
+                ):
+                    raise ContextValidationError(
+                        f"Objective {objective_id} must exist exactly once in an allowed operational state"
+                    )
+                if objective_id in staged_target_ids:
+                    raise ContextValidationError(
+                        f"Objective {objective_id} was not removed during closure"
+                    )
             other_before = [
                 value
                 for value in _objective_ids(originals[target])
-                if value != objective_id
+                if value not in objective_ids
             ]
             other_after = [
                 value
-                for value in _objective_ids(staged[target])
-                if value != objective_id
+                for value in staged_target_ids
+                if value not in objective_ids
             ]
             if other_before != other_after:
                 raise ContextValidationError(
-                    "Closure removes or changes an objective other than "
-                    f"{objective_id}"
+                    "Closure removes or changes an objective outside the requested batch"
                 )
 
         completed_target = "SBM-SUITE/context/COMPLETED_OBJECTIVES.md"
@@ -1511,19 +1722,20 @@ def _validate_objective_transition(
         staged_ids = _objective_ids(staged_completed)
         if len(original_ids) != len(set(original_ids)):
             raise ContextValidationError("Completed objective IDs must be unique")
-        if objective_id in original_ids:
+        collisions = sorted(set(objective_ids) & set(original_ids))
+        if collisions:
             raise ContextValidationError(
-                f"Completed objective ID is duplicated: {objective_id}"
+                "Completed objective ID is duplicated: " + ", ".join(collisions)
             )
-        if staged_ids.count(objective_id) != 1:
-            raise ContextValidationError(
-                "Closure must append exactly one completed objective entry"
-            )
-        if [value for value in staged_ids if value != objective_id] != original_ids:
+        for objective_id in objective_ids:
+            if staged_ids.count(objective_id) != 1:
+                raise ContextValidationError(
+                    f"Closure must append exactly one completed entry: {objective_id}"
+                )
+        if [value for value in staged_ids if value not in objective_ids] != original_ids:
             raise ContextValidationError(
                 "Closure modifies unrelated completed objective history"
             )
-        project_heading = f"### {project_directory}"
         original_headings = _completed_project_headings(original_completed)
         staged_headings = _completed_project_headings(staged_completed)
         if len(original_headings) != len(set(original_headings)):
@@ -1535,57 +1747,56 @@ def _validate_objective_transition(
                 "Closure must not create duplicate project headings"
             )
 
-        original_project_count = original_headings.count(project_heading)
-        if original_project_count > 1:
+        requested_headings = list(dict.fromkeys(
+            f"### {objective.get('project') or project_directory}"
+            for objective in objectives
+        ))
+        expected_headings = original_headings + [
+            heading for heading in requested_headings if heading not in original_headings
+        ]
+        if staged_headings != expected_headings:
             raise ContextValidationError(
-                f"COMPLETED_OBJECTIVES.md contains duplicate {project_heading} headings"
+                "Closure must preserve project headings and append only requested groups"
             )
-        if original_project_count == 0:
-            if staged_headings != [*original_headings, project_heading]:
+        for objective in objectives:
+            project_heading = f"### {objective.get('project') or project_directory}"
+            project_section = _completed_project_section(staged_completed, project_heading)
+            if not _contains_completed_objectives_table(project_section):
+                raise ContextValidationError("Completed objective project group has an invalid table")
+            if _objective_ids(project_section).count(objective["objective_id"]) != 1:
+                raise ContextValidationError("The completed objective must be recorded under its project heading")
+            table = _markdown_tables(project_section).get(project_heading)
+            if table is None:
+                raise ContextValidationError("Terminal objective history table is missing")
+            headers = _table_row_cells(table[0])
+            status_index = headers.index("Final status")
+            matching_rows = [
+                _table_row_cells(row)
+                for row in table[1]
+                if _table_row_cells(row)[0] == objective["objective_id"]
+            ]
+            if len(matching_rows) != 1 or matching_rows[0][status_index] != terminal_status:
                 raise ContextValidationError(
-                    "Closure must append exactly one new project heading and preserve "
-                    "all existing project groups"
+                    f"Terminal objective status must be {terminal_status}: {objective['objective_id']}"
                 )
-        elif staged_headings != original_headings:
-            raise ContextValidationError(
-                "Closure must preserve every existing project heading in order"
-            )
-
-        project_section = _completed_project_section(
-            staged_completed,
-            project_heading,
-        )
-        if not _contains_completed_objectives_table(project_section):
-            raise ContextValidationError(
-                "Completed objective project group has an invalid table"
-            )
-        if _objective_ids(project_section).count(objective_id) != 1:
-            raise ContextValidationError(
-                "The completed objective must be recorded under its project heading"
-            )
     elif lifecycle_phase == "implementation-progress":
-        objective_id = objective_ids[0]
         for target in context_targets:
-            status_before = _operational_objective_status(
-                originals[target],
-                objective_id,
-            )
-            status_after = _operational_objective_status(
-                staged[target],
-                objective_id,
-            )
-            if status_after != status_before:
-                raise ContextValidationError(
-                    "implementation-progress must preserve objective status: "
-                    f"{objective_id}"
-                )
-    elif lifecycle_phase == "objective-activation" and context_targets:
-        objective = objectives[0]
-        objective_id = objective["objective_id"]
-        if objective_id in completed_ids:
+            for objective_id in objective_ids:
+                status_before = _operational_objective_status(originals[target], objective_id)
+                status_after = _operational_objective_status(staged[target], objective_id)
+                if status_after != status_before:
+                    raise ContextValidationError(
+                        "implementation-progress must preserve objective status: "
+                        f"{objective_id}"
+                    )
+    elif lifecycle_phase in {"objective-activation", "objective-update"} and context_targets:
+        objective_ids = [objective["objective_id"] for objective in objectives]
+        completed_collisions = sorted(set(objective_ids) & set(completed_ids))
+        if completed_collisions:
+            action = "activate" if lifecycle_phase == "objective-activation" else "mutate"
             raise ContextValidationError(
-                f"objective-activation cannot activate completed objective: "
-                f"{objective_id}"
+                f"{lifecycle_phase} cannot {action} completed objective: "
+                + ", ".join(completed_collisions)
             )
 
         for target in context_targets:
@@ -1595,85 +1806,112 @@ def _validate_objective_transition(
             pending_before = _objective_ids(
                 _section_markdown(originals[target], PENDING_OBJECTIVE_HEADING)
             )
-            if active_before.count(objective_id) != 0:
-                raise ContextValidationError(
-                    "objective-activation requires a pending objective, but it is "
-                    f"already active: {objective_id}"
-                )
-            if pending_before.count(objective_id) != 1:
-                raise ContextValidationError(
-                    "objective-activation pending objective must exist exactly once: "
-                    f"{objective_id}"
-                )
-
-            pending_objective = {**objective, "status": "pending"}
             global_context = target == "SBM-SUITE/context/PROJECT_CONTEXT.md"
-            _validate_planning_objective_fields(
-                originals[target],
-                pending_objective,
-                global_context=global_context,
-                project_directory=project_directory,
-                lifecycle_phase=lifecycle_phase,
-            )
-            _validate_planning_objective_fields(
-                staged[target],
-                objective,
-                global_context=global_context,
-                project_directory=project_directory,
-                lifecycle_phase=lifecycle_phase,
-            )
-            pending_cells = _planning_objective_row(
-                originals[target],
-                pending_objective,
-                lifecycle_phase,
-            )
-            active_cells = _planning_objective_row(
-                staged[target],
-                objective,
-                lifecycle_phase,
-            )
-            status_index = 3 if global_context else 2
-            expected_active_cells = list(pending_cells)
-            expected_active_cells[status_index] = "active"
-            if active_cells != expected_active_cells:
-                raise ContextValidationError(
-                    "objective-activation may change only the status cell: "
-                    f"{objective_id}"
-                )
-
             active_after = _objective_ids(
                 _section_markdown(staged[target], ACTIVE_OBJECTIVE_HEADING)
             )
             pending_after = _objective_ids(
                 _section_markdown(staged[target], PENDING_OBJECTIVE_HEADING)
             )
-            if active_after.count(objective_id) != 1:
-                raise ContextValidationError(
-                    "objective-activation must place the objective exactly once in "
-                    f"the active table: {objective_id}"
+            for objective in objectives:
+                objective_id = objective["objective_id"]
+                desired_status = objective["status"]
+                if lifecycle_phase == "objective-activation":
+                    source_status = "pending"
+                elif active_before.count(objective_id) == 1 and pending_before.count(objective_id) == 0:
+                    source_status = "active"
+                elif pending_before.count(objective_id) == 1 and active_before.count(objective_id) == 0:
+                    source_status = "pending"
+                else:
+                    raise ContextValidationError(
+                        "objective-update objective must exist exactly once in an "
+                        f"operational table: {objective_id}"
+                    )
+                if lifecycle_phase == "objective-activation":
+                    if active_before.count(objective_id) != 0:
+                        raise ContextValidationError(
+                            "objective-activation requires a pending objective, but it is "
+                            f"already active: {objective_id}"
+                        )
+                    if pending_before.count(objective_id) != 1:
+                        raise ContextValidationError(
+                            "objective-activation pending objective must exist exactly once: "
+                            f"{objective_id}"
+                        )
+
+                source_objective = {**objective, "status": source_status}
+                _validate_planning_objective_fields(
+                    originals[target],
+                    source_objective,
+                    global_context=global_context,
+                    project_directory=project_directory,
+                    lifecycle_phase=lifecycle_phase,
+                    allow_branch_mismatch=True,
                 )
-            if objective_id in pending_after:
-                raise ContextValidationError(
-                    "objective-activation must remove the objective from the pending "
-                    f"table: {objective_id}"
+                _validate_planning_objective_fields(
+                    staged[target],
+                    objective,
+                    global_context=global_context,
+                    project_directory=project_directory,
+                    lifecycle_phase=lifecycle_phase,
                 )
+                source_cells = _planning_objective_row(
+                    originals[target],
+                    source_objective,
+                    lifecycle_phase,
+                )
+                active_cells = _planning_objective_row(
+                    staged[target],
+                    objective,
+                    lifecycle_phase,
+                )
+                status_index = 3 if global_context else 2
+                branch_index = 6 if global_context else 5
+                expected_cells = list(source_cells)
+                expected_cells[status_index] = desired_status
+                expected_cells[branch_index] = objective["branch"]
+                if active_cells != expected_cells:
+                    raise ContextValidationError(
+                        f"{lifecycle_phase} may change only the status and explicit "
+                        "branch cells: "
+                        f"{objective_id}"
+                    )
+
+                expected_active_count = 1 if desired_status == "active" else 0
+                expected_pending_count = 1 if desired_status == "pending" else 0
+                if active_after.count(objective_id) != expected_active_count:
+                    raise ContextValidationError(
+                        f"{lifecycle_phase} produced an invalid active row count: {objective_id}"
+                    )
+                if pending_after.count(objective_id) != expected_pending_count:
+                    raise ContextValidationError(
+                        f"{lifecycle_phase} produced an invalid pending row count: {objective_id}"
+                    )
 
             unrelated_before = [
                 value
                 for value in _objective_ids(originals[target])
-                if value != objective_id
+                if value not in objective_ids
             ]
             unrelated_after = [
                 value
                 for value in _objective_ids(staged[target])
-                if value != objective_id
+                if value not in objective_ids
             ]
             if unrelated_after != unrelated_before:
                 raise ContextValidationError(
-                    "objective-activation must preserve every unrelated objective"
+                    f"{lifecycle_phase} must preserve every unrelated objective"
                 )
     elif lifecycle_phase == "planning-activation" and context_targets:
         requested = set(objective_ids)
+        operational_objectives = [
+            objective for objective in objectives
+            if objective["status"] in {"active", "pending"}
+        ]
+        directly_completed = [
+            objective for objective in objectives
+            if objective["status"] == "completed"
+        ]
         completed_duplicates = requested & set(completed_ids)
         if completed_duplicates:
             raise ContextValidationError(
@@ -1691,7 +1929,7 @@ def _validate_objective_transition(
                     + ", ".join(sorted(duplicates))
                 )
 
-            for objective_id in objective_ids:
+            for objective_id in [item["objective_id"] for item in operational_objectives]:
                 if staged_ids.count(objective_id) != 1:
                     raise ContextValidationError(
                         "planning-activation must add each requested objective "
@@ -1699,7 +1937,7 @@ def _validate_objective_transition(
                     )
 
             global_context = target == "SBM-SUITE/context/PROJECT_CONTEXT.md"
-            for objective in objectives:
+            for objective in operational_objectives:
                 _validate_planning_objective_fields(
                     staged[target],
                     objective,
@@ -1712,6 +1950,24 @@ def _validate_objective_transition(
                 raise ContextValidationError(
                     "planning-activation must preserve every unrelated objective"
                 )
+            if any(item["objective_id"] in staged_ids for item in directly_completed):
+                raise ContextValidationError(
+                    "directly completed objectives must not enter operational tables"
+                )
+        if directly_completed:
+            completed_target = "SBM-SUITE/context/COMPLETED_OBJECTIVES.md"
+            original_ids = _objective_ids(originals[completed_target])
+            staged_ids = _objective_ids(staged[completed_target])
+            direct_ids = [item["objective_id"] for item in directly_completed]
+            if [value for value in staged_ids if value not in direct_ids] != original_ids:
+                raise ContextValidationError(
+                    "direct completion modifies unrelated completed history"
+                )
+            for objective_id in direct_ids:
+                if staged_ids.count(objective_id) != 1:
+                    raise ContextValidationError(
+                        f"direct completion must append exactly one entry: {objective_id}"
+                    )
 
 
 def _validate_staged_preservation(
@@ -1733,7 +1989,8 @@ def _validate_staged_preservation(
             target,
             project_name,
             project_directory,
-            [objective["objective_id"] for objective in objectives],
+            lifecycle_phase,
+            objectives,
         )
     _validate_objective_transition(
         originals,
