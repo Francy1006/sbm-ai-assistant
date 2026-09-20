@@ -79,7 +79,7 @@ fi
   echo "- Exit code: ${COVERAGE_STATUS}"
   echo
   echo '```text'
-  cat "${COVERAGE_LOG}"
+  sed 's/[[:space:]]*$//' "${COVERAGE_LOG}"
   echo '```'
   echo
   echo "## SonarScanner"
@@ -87,7 +87,7 @@ fi
   echo "- Exit code: ${SONAR_STATUS}"
   echo
   echo '```text'
-  cat "${SONAR_LOG}"
+  sed 's/[[:space:]]*$//' "${SONAR_LOG}"
   echo '```'
   echo
   echo "## Evidence boundary"
