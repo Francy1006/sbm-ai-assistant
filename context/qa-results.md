@@ -1,6 +1,6 @@
 # QA Results
 
-> **Generated at:** 2026-09-22T17:41:58Z
+> **Generated at:** 2026-09-22T18:55:22Z
 >
 > **Project:** SBM-AI-ASSISTANT
 >
@@ -11,8 +11,8 @@
 - Exit code: 0
 
 ```text
- Container sbm-ai-assistant-backend-run-36ce21658fac Creating
- Container sbm-ai-assistant-backend-run-36ce21658fac Created
+ Container sbm-ai-assistant-backend-run-4aea2450938c Creating
+ Container sbm-ai-assistant-backend-run-4aea2450938c Created
 ................................................................ [ 32%]
 ................................................................... [ 67%]
 ...............................................................        [100%]
@@ -58,7 +58,7 @@ backend/app/services/qdrant_service.py                                     91   
 -------------------------------------------------------------------------------------------------------------------
 TOTAL                                                                    3398    570   1300    305    80%
 Coverage XML written to file /workspace/coverage.xml
-194 passed, 1 warning, 15 subtests passed in 29.45s
+194 passed, 1 warning, 15 subtests passed in 31.92s
 Coverage generado correctamente.
 ```
 
@@ -67,112 +67,112 @@ Coverage generado correctamente.
 - Exit code: 0
 
 ```text
-17:40:49.740 INFO  Scanner configuration file: /opt/sonar-scanner/conf/sonar-scanner.properties
-17:40:49.751 INFO  Project root configuration file: /usr/src/app/sonar-project.properties
-17:40:49.805 INFO  SonarScanner CLI 8.1.0.6389
-17:40:49.820 INFO  Linux 6.18.33.2-microsoft-standard-WSL2 amd64
-17:40:52.236 INFO  Communicating with SonarQube Community Build 26.7.0.124771
-17:40:52.239 INFO  JRE provisioning: os[linux], arch[x86_64]
-17:41:03.008 INFO  Starting SonarScanner Engine...
-17:41:03.018 INFO  Java 21.0.9 Eclipse Adoptium (64-bit)
-17:41:08.615 INFO  Load global settings
-17:41:09.099 INFO  Load global settings (done) | time=478ms
-17:41:09.118 INFO  Server id: 54000601-AZ-DAVF-MejkBZkEKtuI
-17:41:09.154 INFO  Loading required plugins
-17:41:09.154 INFO  Load plugins index
-17:41:09.201 INFO  Load plugins index (done) | time=46ms
-17:41:09.203 INFO  Load/download plugins
-17:41:09.422 INFO  Load/download plugins (done) | time=220ms
-17:41:11.044 INFO  Process project properties
-17:41:11.140 INFO  Process project properties (done) | time=97ms
-17:41:11.188 INFO  Project key: SBM-AI-ASSISTANT
-17:41:11.189 INFO  Base dir: /usr/src/app
-17:41:11.190 INFO  Working dir: /tmp/.scannerwork
-17:41:11.237 INFO  Load project settings for component key: 'SBM-AI-ASSISTANT'
-17:41:11.266 INFO  Load project settings for component key: 'SBM-AI-ASSISTANT' (done) | time=29ms
-17:41:11.344 INFO  Load quality profiles
-17:41:11.475 INFO  Load quality profiles (done) | time=131ms
-17:41:11.697 INFO  Load active rules
-17:41:13.677 INFO  Load active rules (done) | time=1956ms
-17:41:13.706 INFO  Load analysis cache
-17:41:14.692 INFO  Load analysis cache | time=986ms
-17:41:15.527 INFO  Preprocessing files...
-17:41:17.000 INFO  1 language detected in 48 preprocessed files (done) | time=1470ms
-17:41:17.001 INFO  5 files ignored because of inclusion/exclusion patterns
-17:41:17.002 INFO  9 directories skipped because of exclusion patterns (content not counted)
-17:41:17.003 INFO  0 files ignored because of scm ignore settings
-17:41:17.010 INFO  Loading plugins for detected languages
-17:41:17.011 INFO  Load/download plugins
-17:41:17.187 INFO  Load/download plugins (done) | time=176ms
-17:41:18.225 INFO  Load project repositories
-17:41:18.664 INFO  Load project repositories (done) | time=438ms
-17:41:18.715 INFO  Indexing files...
-17:41:18.716 INFO  Project configuration:
-17:41:18.717 INFO    Excluded sources: **/.venv/**, **/__pycache__/**, **/tests/**, backend/tests/**/*.py
-17:41:18.718 INFO    Included tests: backend/tests/**/*.py
-17:41:19.110 INFO  48 files indexed (done) | time=395ms
-17:41:19.113 INFO  Quality profile for py: Sonar way
-17:41:19.117 INFO  ------------- Run sensors on module SBM-AI-ASSISTANT
-17:41:19.260 INFO  Load metrics repository
-17:41:19.317 INFO  Load metrics repository (done) | time=57ms
-17:41:22.932 INFO  Sensor IaC hadolint report Sensor [iac]
-17:41:22.935 INFO  Sensor IaC hadolint report Sensor [iac] (done) | time=5ms
-17:41:22.935 INFO  Sensor Java Config Sensor [iac]
-17:41:23.826 INFO  There are no files to be analyzed for the Java language
-17:41:23.827 INFO  Sensor Java Config Sensor [iac] (done) | time=890ms
-17:41:23.828 INFO  Sensor IaC Docker Sensor [iac]
-17:41:23.838 INFO  There are no files to be analyzed for the Docker language
-17:41:23.839 INFO  Sensor IaC Docker Sensor [iac] (done) | time=12ms
-17:41:23.840 INFO  Sensor Python Sensor [python]
-17:41:28.497 INFO  Starting global symbols computation
-17:41:28.505 INFO  48 source files to be analyzed
-17:41:32.094 INFO  48/48 source files have been analyzed
-17:41:32.098 INFO  Finished step global symbols computation in 3591ms
-17:41:32.417 INFO  Starting rules execution
-17:41:32.419 INFO  48 source files to be analyzed
-17:41:42.223 INFO  48/48 source files have been analyzed
-17:41:42.224 INFO  Finished step rules execution in 9804ms
-17:41:42.225 INFO  The Python analyzer was able to leverage cached data from previous analyses for 0 out of 48 files. These files were not parsed.
-17:41:42.239 INFO  Sensor Python Sensor [python] (done) | time=18400ms
-17:41:42.240 INFO  Sensor Cobertura Sensor for Python coverage [python]
-17:41:44.263 INFO  Python test coverage
-17:41:44.274 INFO  Parsing report '/usr/src/app/coverage.xml'
-17:41:44.895 INFO  Sensor Cobertura Sensor for Python coverage [python] (done) | time=2656ms
-17:41:44.896 INFO  Sensor PythonXUnitSensor [python]
-17:41:46.788 INFO  Sensor PythonXUnitSensor [python] (done) | time=1892ms
-17:41:46.789 INFO  Sensor Python Dependency Sensor [python]
-17:41:46.811 INFO  Sensor Python Dependency Sensor [python] (done) | time=22ms
-17:41:46.811 INFO  Sensor TextAndSecretsSensor [text]
-17:41:46.894 INFO  Available processors: 8
-17:41:46.895 INFO  Using 8 threads for analysis.
-17:41:48.223 INFO  Start fetching files for the text and secrets analysis
-17:41:48.257 INFO  Using Git CLI to retrieve dirty files
-17:41:48.294 WARN  Retrieving only language associated files, make sure to run the analysis inside a git repository to make use of inclusions specified via "sonar.text.inclusions"
-17:41:48.295 INFO  Starting the text and secrets analysis
-17:41:48.303 INFO  48 source files to be analyzed for the text and secrets analysis
-17:41:48.662 INFO  48/48 source files have been analyzed for the text and secrets analysis
-17:41:48.667 INFO  Sensor TextAndSecretsSensor [text] (done) | time=1852ms
-17:41:48.677 INFO  ------------- Run sensors on project
-17:41:49.434 INFO  Sensor IaC Project Sensor [iac]
-17:41:49.435 INFO  Sensor IaC Project Sensor [iac] (done) | time=2ms
-17:41:49.436 INFO  Sensor Zero Coverage Sensor
-17:41:49.452 INFO  Sensor Zero Coverage Sensor (done) | time=16ms
-17:41:49.453 INFO  ------------- Gather SCA dependencies on project
-17:41:49.472 INFO  Dependency analysis skipped
-17:41:49.550 INFO  CPD Executor 4 files had no CPD blocks
-17:41:49.551 INFO  CPD Executor Calculating CPD for 39 files
-17:41:49.675 INFO  CPD Executor CPD calculation finished (done) | time=125ms
-17:41:49.779 INFO  SCM revision ID 'a1eaaa29f6c5a16d9f2b4bfd640fdda6eee39291'
-17:41:50.595 INFO  Analysis report generated in 870ms, dir size=1.7 MB
-17:41:50.912 INFO  Analysis report compressed in 316ms, zip size=690.5 kB
-17:41:51.201 INFO  Analysis report uploaded in 289ms
-17:41:51.209 INFO  ANALYSIS SUCCESSFUL, you can find the results at: http://host.docker.internal:9000/dashboard?id=SBM-AI-ASSISTANT
-17:41:51.209 INFO  Note that you will be able to access the updated dashboard once the server has processed the submitted analysis report
-17:41:51.210 INFO  More about the report processing at http://host.docker.internal:9000/api/ce/task?id=e9c3762e-978c-472b-a6eb-d031ce40eee2
-17:41:51.256 INFO  Analysis total time: 41.538 s
-17:41:51.266 INFO  SonarScanner Engine completed successfully
-17:41:51.393 INFO  EXECUTION SUCCESS
-17:41:51.394 INFO  Total time: 1:01.661s
+18:54:26.930 INFO  Scanner configuration file: /opt/sonar-scanner/conf/sonar-scanner.properties
+18:54:26.939 INFO  Project root configuration file: /usr/src/app/sonar-project.properties
+18:54:26.980 INFO  SonarScanner CLI 8.1.0.6389
+18:54:26.996 INFO  Linux 6.18.33.2-microsoft-standard-WSL2 amd64
+18:54:29.371 INFO  Communicating with SonarQube Community Build 26.7.0.124771
+18:54:29.372 INFO  JRE provisioning: os[linux], arch[x86_64]
+18:54:32.427 INFO  Starting SonarScanner Engine...
+18:54:32.436 INFO  Java 21.0.9 Eclipse Adoptium (64-bit)
+18:54:37.574 INFO  Load global settings
+18:54:38.022 INFO  Load global settings (done) | time=443ms
+18:54:38.038 INFO  Server id: 54000601-AZ-DAVF-MejkBZkEKtuI
+18:54:38.070 INFO  Loading required plugins
+18:54:38.071 INFO  Load plugins index
+18:54:38.120 INFO  Load plugins index (done) | time=50ms
+18:54:38.121 INFO  Load/download plugins
+18:54:38.343 INFO  Load/download plugins (done) | time=222ms
+18:54:39.620 INFO  Process project properties
+18:54:39.699 INFO  Process project properties (done) | time=79ms
+18:54:39.738 INFO  Project key: SBM-AI-ASSISTANT
+18:54:39.739 INFO  Base dir: /usr/src/app
+18:54:39.740 INFO  Working dir: /tmp/.scannerwork
+18:54:39.779 INFO  Load project settings for component key: 'SBM-AI-ASSISTANT'
+18:54:39.843 INFO  Load project settings for component key: 'SBM-AI-ASSISTANT' (done) | time=64ms
+18:54:39.900 INFO  Load quality profiles
+18:54:40.004 INFO  Load quality profiles (done) | time=103ms
+18:54:40.188 INFO  Load active rules
+18:54:40.863 INFO  Load active rules (done) | time=674ms
+18:54:40.877 INFO  Load analysis cache
+18:54:41.017 INFO  Load analysis cache | time=140ms
+18:54:41.592 INFO  Preprocessing files...
+18:54:42.987 INFO  1 language detected in 48 preprocessed files (done) | time=1393ms
+18:54:42.988 INFO  5 files ignored because of inclusion/exclusion patterns
+18:54:42.988 INFO  9 directories skipped because of exclusion patterns (content not counted)
+18:54:42.989 INFO  0 files ignored because of scm ignore settings
+18:54:42.994 INFO  Loading plugins for detected languages
+18:54:42.996 INFO  Load/download plugins
+18:54:43.156 INFO  Load/download plugins (done) | time=163ms
+18:54:44.091 INFO  Load project repositories
+18:54:44.472 INFO  Load project repositories (done) | time=381ms
+18:54:44.521 INFO  Indexing files...
+18:54:44.522 INFO  Project configuration:
+18:54:44.523 INFO    Excluded sources: **/.venv/**, **/__pycache__/**, **/tests/**, backend/tests/**/*.py
+18:54:44.524 INFO    Included tests: backend/tests/**/*.py
+18:54:44.911 INFO  48 files indexed (done) | time=389ms
+18:54:44.913 INFO  Quality profile for py: Sonar way
+18:54:44.914 INFO  ------------- Run sensors on module SBM-AI-ASSISTANT
+18:54:45.063 INFO  Load metrics repository
+18:54:45.123 INFO  Load metrics repository (done) | time=60ms
+18:54:47.582 INFO  Sensor IaC hadolint report Sensor [iac]
+18:54:47.585 INFO  Sensor IaC hadolint report Sensor [iac] (done) | time=4ms
+18:54:47.585 INFO  Sensor Java Config Sensor [iac]
+18:54:48.460 INFO  There are no files to be analyzed for the Java language
+18:54:48.461 INFO  Sensor Java Config Sensor [iac] (done) | time=874ms
+18:54:48.462 INFO  Sensor IaC Docker Sensor [iac]
+18:54:48.469 INFO  There are no files to be analyzed for the Docker language
+18:54:48.470 INFO  Sensor IaC Docker Sensor [iac] (done) | time=9ms
+18:54:48.471 INFO  Sensor Python Sensor [python]
+18:54:52.983 INFO  Starting global symbols computation
+18:54:52.989 INFO  48 source files to be analyzed
+18:54:56.500 INFO  48/48 source files have been analyzed
+18:54:56.503 INFO  Finished step global symbols computation in 3515ms
+18:54:56.720 INFO  Starting rules execution
+18:54:56.721 INFO  48 source files to be analyzed
+18:55:06.575 INFO  48/48 source files have been analyzed
+18:55:06.575 INFO  Finished step rules execution in 9853ms
+18:55:06.576 INFO  The Python analyzer was able to leverage cached data from previous analyses for 0 out of 48 files. These files were not parsed.
+18:55:06.592 INFO  Sensor Python Sensor [python] (done) | time=18123ms
+18:55:06.593 INFO  Sensor Cobertura Sensor for Python coverage [python]
+18:55:08.411 INFO  Python test coverage
+18:55:08.421 INFO  Parsing report '/usr/src/app/coverage.xml'
+18:55:08.994 INFO  Sensor Cobertura Sensor for Python coverage [python] (done) | time=2401ms
+18:55:08.998 INFO  Sensor PythonXUnitSensor [python]
+18:55:10.835 INFO  Sensor PythonXUnitSensor [python] (done) | time=1839ms
+18:55:10.836 INFO  Sensor Python Dependency Sensor [python]
+18:55:10.860 INFO  Sensor Python Dependency Sensor [python] (done) | time=24ms
+18:55:10.861 INFO  Sensor TextAndSecretsSensor [text]
+18:55:10.943 INFO  Available processors: 8
+18:55:10.945 INFO  Using 8 threads for analysis.
+18:55:12.235 INFO  Start fetching files for the text and secrets analysis
+18:55:12.268 INFO  Using Git CLI to retrieve dirty files
+18:55:12.300 WARN  Retrieving only language associated files, make sure to run the analysis inside a git repository to make use of inclusions specified via "sonar.text.inclusions"
+18:55:12.301 INFO  Starting the text and secrets analysis
+18:55:12.309 INFO  48 source files to be analyzed for the text and secrets analysis
+18:55:12.685 INFO  48/48 source files have been analyzed for the text and secrets analysis
+18:55:12.693 INFO  Sensor TextAndSecretsSensor [text] (done) | time=1832ms
+18:55:12.701 INFO  ------------- Run sensors on project
+18:55:13.357 INFO  Sensor IaC Project Sensor [iac]
+18:55:13.359 INFO  Sensor IaC Project Sensor [iac] (done) | time=2ms
+18:55:13.361 INFO  Sensor Zero Coverage Sensor
+18:55:13.376 INFO  Sensor Zero Coverage Sensor (done) | time=17ms
+18:55:13.376 INFO  ------------- Gather SCA dependencies on project
+18:55:13.393 INFO  Dependency analysis skipped
+18:55:13.466 INFO  CPD Executor 4 files had no CPD blocks
+18:55:13.467 INFO  CPD Executor Calculating CPD for 39 files
+18:55:13.605 INFO  CPD Executor CPD calculation finished (done) | time=138ms
+18:55:13.705 INFO  SCM revision ID 'ca04a8d3ce93121881fed228528b7aad4bb1e0a3'
+18:55:14.535 INFO  Analysis report generated in 877ms, dir size=1.7 MB
+18:55:14.904 INFO  Analysis report compressed in 368ms, zip size=688.7 kB
+18:55:15.209 INFO  Analysis report uploaded in 303ms
+18:55:15.219 INFO  ANALYSIS SUCCESSFUL, you can find the results at: http://host.docker.internal:9000/dashboard?id=SBM-AI-ASSISTANT
+18:55:15.220 INFO  Note that you will be able to access the updated dashboard once the server has processed the submitted analysis report
+18:55:15.221 INFO  More about the report processing at http://host.docker.internal:9000/api/ce/task?id=69ef5840-a3b5-4f4a-ade1-70b4743d6f04
+18:55:15.268 INFO  Analysis total time: 36.681 s
+18:55:15.279 INFO  SonarScanner Engine completed successfully
+18:55:15.524 INFO  EXECUTION SUCCESS
+18:55:15.526 INFO  Total time: 48.604s
 Esperando procesamiento de SonarQube...
 Quality Gate: OK
 SonarQube Quality Gate aprobado.
