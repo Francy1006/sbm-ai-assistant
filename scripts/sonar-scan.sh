@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE=".env.dev"
-REPORT_FILE="report-task.txt"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SUITE_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+source "${SUITE_ROOT}/context/scripts/sonar-scanner-common.sh"
+
+ENV_FILE="${ROOT}/.env.dev"
+REPORT_FILE="${ROOT}/report-task.txt"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "ERROR: No existe ${ENV_FILE}"
@@ -42,16 +47,37 @@ if [[ -z "${SONAR_TOKEN}" ]]; then
   exit 1
 fi
 
-rm -f "${REPORT_FILE}"
+SONAR_ARCH="$(sbm_sonar_detect_arch)"
+SONAR_SCANNER_PLATFORM="$(sbm_sonar_platform)"
+SONAR_CACHE_DIR="$(sbm_sonar_cache_dir "${ROOT}" "${SONAR_ARCH}")"
+SONAR_CONTAINER_NAME="sbm-sonar-${SONAR_ARCH}-$$"
 
-docker run --rm \
-  --env-file "${ENV_FILE}" \
-  -v "$(pwd):/usr/src/app" \
-  -v "$(pwd)/.sonar/cache:/opt/sonar-scanner/.sonar/cache" \
-  -w /usr/src/app \
-  sonarsource/sonar-scanner-cli \
-  -Dsonar.host.url="${SONAR_HOST_URL}" \
-  -Dsonar.scanner.metadataFilePath=/usr/src/app/report-task.txt
+rm -f "${REPORT_FILE}"
+mkdir -p "${SONAR_CACHE_DIR}"
+
+docker_args=(
+  docker
+  run
+  --rm
+  --name
+  "${SONAR_CONTAINER_NAME}"
+  --platform
+  "${SONAR_SCANNER_PLATFORM}"
+  --env-file
+  "${ENV_FILE}"
+  -v
+  "${ROOT}:/usr/src/app"
+  -v
+  "${SONAR_CACHE_DIR}:/opt/sonar-scanner/.sonar/cache"
+  -w
+  "/usr/src/app"
+  "$(sbm_sonar_image)"
+  "-Dsonar.host.url=${SONAR_HOST_URL}"
+  "-Dsonar.scanner.metadataFilePath=/usr/src/app/report-task.txt"
+)
+
+sbm_sonar_ensure_image
+sbm_sonar_run "${docker_args[@]}"
 
 if [[ ! -f "${REPORT_FILE}" ]]; then
   echo "ERROR: No se generó ${REPORT_FILE}"
